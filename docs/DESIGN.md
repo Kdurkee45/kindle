@@ -415,25 +415,47 @@ kindle "a weather app" -v
 
 ## Open Questions
 
-1. **Should Kindle output a git repo with atomic commits?** Each dev
-   task could be a separate commit, making the build history reviewable.
-   Or just deliver a flat directory with everything in it.
+1. ~~**Should Kindle output a git repo with atomic commits?**~~ **RESOLVED.**
+   Yes. Git repo initialized at the start, each dev task committed
+   atomically after completion, QA fixes get their own commits. The
+   build history is reviewable and individual tasks can be reverted.
+   Pattern proven in Hone — parallel agents build concurrently, commits
+   happen sequentially as each finishes.
 
-2. **Integration testing.** Individual dev tasks write their own tests,
-   but who writes the integration tests that verify tasks work together?
-   Options: (a) the QA agent writes integration tests, (b) the Architect
-   stage defines integration test specs, (c) skip for V1.
+2. ~~**Integration testing.**~~ **RESOLVED.** The QA stage writes
+   integration tests as part of its Technical QA pass. After all dev
+   tasks complete, QA reads the full codebase, identifies cross-boundary
+   integration points (e.g., component → API → database), and writes
+   tests that verify they work together. These integration tests become
+   part of the project deliverable — the user gets both unit tests
+   (from Dev) and integration tests (from QA).
 
-3. **Dependency installation.** Should the Dev agents install dependencies
-   as they go, or should the Package stage handle all dependency resolution?
-   Early installation means dev agents can verify their code actually runs.
-   Late installation means fewer conflicts between parallel agents.
+3. ~~**Dependency installation.**~~ **RESOLVED.** Hybrid approach. Dev
+   agents declare dependencies in the manifest (package.json, pyproject.toml)
+   but do NOT install them — parallel agents writing to the same lockfile
+   would conflict. After all dev tasks complete, a single dependency
+   resolution pass runs before QA begins. This gives QA a fully installed
+   environment to run tests against. Implemented as a pre-step at the
+   start of QA, not a separate stage.
 
-4. **Frontend scaffolding.** For web apps, should Kindle use a framework
-   CLI (create-react-app, create-next-app, etc.) to bootstrap, or build
-   from scratch? Scaffolding gives you the right structure and config but
-   also gives you boilerplate the CPO audit will flag.
+4. ~~**Frontend scaffolding.**~~ **RESOLVED.** Scaffold then strip. The
+   Grill stage asks about platform targets (web, mobile, both, API, CLI)
+   and framework preferences. The Architect uses the appropriate framework
+   CLI (`create-next-app`, `create-vite`, `create-expo-app`, etc.) to
+   bootstrap the project structure and config, then immediately strips
+   all boilerplate content (default pages, placeholder text, example
+   components) while preserving the infrastructure (build config,
+   TypeScript setup, routing conventions). Dev agents then build into
+   the clean skeleton. For monorepo cases (web + mobile), the Architect
+   scaffolds each app separately within a monorepo structure with
+   shared packages.
 
-5. **Multi-language projects.** Some apps need both a frontend and a
-   backend (React + FastAPI). How should the Architect split that? Two
-   services with separate dependency manifests? A monorepo layout?
+5. ~~**Multi-language projects.**~~ **RESOLVED.** Monorepo layout. The
+   Grill identifies platform targets, the Architect scaffolds a monorepo:
+   `apps/web/`, `apps/api/`, `packages/shared/`. Each app gets its own
+   dependency manifest, framework scaffolding, and test runner. Dev tasks
+   scope to one app — no cross-app conflicts. Shared types/interfaces
+   go in `packages/shared/` as a separate dev task. The pre-QA dependency
+   install step handles multiple package managers (npm in `apps/web/`,
+   uv/pip in `apps/api/`). QA runs each app's tests with its own runner.
+   Single-language projects skip the monorepo and use a flat structure.
