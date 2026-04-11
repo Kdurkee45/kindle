@@ -35,6 +35,7 @@ class KindleState(TypedDict, total=False):
     # ── User preferences (from CLI flags) ───────────────────
     stack_preference: Annotated[str, _replace]  # e.g. "react", "nextjs", "python"
     auto_approve: Annotated[bool, _replace_bool]
+    review_arch: Annotated[bool, _replace_bool]
     max_concurrent_agents: Annotated[int, _replace_int]
     max_qa_retries: Annotated[int, _replace_int]
     max_cpo_retries: Annotated[int, _replace_int]

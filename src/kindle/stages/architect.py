@@ -7,8 +7,6 @@ the architecture and creates non-overlapping dev tasks for parallel execution.
 from __future__ import annotations
 
 import json
-from pathlib import Path
-
 from kindle.agent import run_agent
 from kindle.artifacts import mark_stage_complete, save_artifact, workspace_path
 from kindle.state import KindleState
@@ -144,6 +142,14 @@ async def architect_node(state: KindleState, ui: UI) -> dict:
             p.unlink()
 
     ui.info(f"Architecture designed — {len(dev_tasks)} dev task(s) created.")
+
+    # Optional human review of architecture before building
+    if state.get("review_arch") and not state.get("auto_approve"):
+        ui.show_artifact("Architecture", architecture)
+        approved, feedback = ui.prompt_arch_review()
+        if not approved:
+            ui.info(f"Architecture feedback: {feedback}")
+            ui.info("Architecture revision not yet implemented — proceeding with current design.")
 
     mark_stage_complete(project_dir, "architect")
     ui.stage_done("architect")

@@ -10,11 +10,10 @@ If either fails, loops back to Dev for fixes (up to max retries).
 from __future__ import annotations
 
 import json
-import os
-from pathlib import Path
+import subprocess
 
 from kindle.agent import run_agent
-from kindle.artifacts import load_artifact, mark_stage_complete, save_artifact, workspace_path
+from kindle.artifacts import mark_stage_complete, save_artifact, workspace_path
 from kindle.state import KindleState
 from kindle.ui import UI
 

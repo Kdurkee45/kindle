@@ -7,10 +7,8 @@ commits per dev task, and optionally creates a Dockerfile.
 from __future__ import annotations
 
 import json
-from pathlib import Path
-
 from kindle.agent import run_agent
-from kindle.artifacts import load_artifact, mark_stage_complete, mark_project_done, save_artifact, workspace_path
+from kindle.artifacts import mark_stage_complete, mark_project_done, save_artifact, workspace_path
 from kindle.state import KindleState
 from kindle.ui import UI
 

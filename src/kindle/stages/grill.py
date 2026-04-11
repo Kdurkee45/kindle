@@ -9,10 +9,8 @@ In auto-approve mode, all recommended answers are used automatically.
 from __future__ import annotations
 
 import json
-from pathlib import Path
-
 from kindle.agent import run_agent
-from kindle.artifacts import load_artifact, mark_stage_complete, save_artifact, workspace_path
+from kindle.artifacts import mark_stage_complete, save_artifact, workspace_path
 from kindle.state import KindleState
 from kindle.ui import UI
 
@@ -162,7 +160,16 @@ async def grill_node(state: KindleState, ui: UI) -> dict:
         # Check for early exit
         if answer.lower() == "done":
             ui.info("User requested early exit — using defaults for remaining questions.")
-            for remaining in open_questions[i:]:
+            # Record the current question with its recommended answer
+            transcript_lines.append(f"Q{i} [{category}]: {question}")
+            transcript_lines.append(f"  Recommended: {recommended}")
+            transcript_lines.append(f"  Answer: {recommended} (auto-default, user said done)")
+            transcript_lines.append("")
+            decisions.append(
+                {"question": question, "recommended": recommended, "answer": recommended, "category": category}
+            )
+            # Fill in remaining questions with defaults
+            for j, remaining in enumerate(open_questions[i:], i + 1):
                 rq = remaining.get("question", str(remaining)) if isinstance(remaining, dict) else str(remaining)
                 rr = (
                     remaining.get("recommended_answer", "No recommendation")
@@ -170,7 +177,7 @@ async def grill_node(state: KindleState, ui: UI) -> dict:
                     else "No recommendation"
                 )
                 rc = remaining.get("category", "general") if isinstance(remaining, dict) else "general"
-                transcript_lines.append(f"Q{i + open_questions.index(remaining) - i + 1} [{rc}]: {rq}")
+                transcript_lines.append(f"Q{j} [{rc}]: {rq}")
                 transcript_lines.append(f"  Recommended: {rr}")
                 transcript_lines.append(f"  Answer: {rr} (auto-default)")
                 transcript_lines.append("")
