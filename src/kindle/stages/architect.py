@@ -9,14 +9,8 @@ from __future__ import annotations
 import json
 
 from kindle.agent import run_agent
-from kindle.artifacts import save_artifact
-from kindle.stages._helpers import (
-    cleanup_workspace_files,
-    load_json_artifact,
-    load_text_artifact,
-    stage_setup,
-    stage_teardown,
-)
+from kindle.artifacts import mark_stage_complete, save_artifact
+from kindle.stages._helpers import stage_setup
 from kindle.state import KindleState
 from kindle.ui import UI
 
@@ -123,23 +117,27 @@ async def architect_node(state: KindleState, ui: UI) -> dict:
 
     # Read architecture
     arch_path = ws / "architecture.md"
-    architecture = load_text_artifact(arch_path) or result.text
+    architecture = arch_path.read_text() if arch_path.exists() else result.text
     save_artifact(project_dir, "architecture.md", architecture)
 
     # Read dev tasks
     tasks_path = ws / "dev_tasks.json"
-    raw_tasks = load_json_artifact(tasks_path)
-    if isinstance(raw_tasks, list):
-        dev_tasks = raw_tasks
-    elif isinstance(raw_tasks, dict):
-        dev_tasks = raw_tasks.get("tasks", [])
+    dev_tasks: list[dict] = []
+    if tasks_path.exists():
+        try:
+            data = json.loads(tasks_path.read_text())
+            dev_tasks = data if isinstance(data, list) else data.get("tasks", [])
+        except json.JSONDecodeError:
+            ui.error("Failed to parse dev_tasks.json — no tasks generated.")
     else:
-        dev_tasks = []
+        ui.error("Agent did not produce dev_tasks.json.")
 
     save_artifact(project_dir, "dev_tasks.json", json.dumps(dev_tasks, indent=2))
 
     # Clean up
-    cleanup_workspace_files(arch_path, tasks_path)
+    for p in [arch_path, tasks_path]:
+        if p.exists():
+            p.unlink()
 
     ui.info(f"Architecture designed — {len(dev_tasks)} dev task(s) created.")
 
@@ -150,7 +148,8 @@ async def architect_node(state: KindleState, ui: UI) -> dict:
             ui.info(f"Architecture feedback: {feedback}")
             ui.info("Architecture revision not yet implemented — proceeding with current design.")
 
-    stage_teardown(project_dir, "architect", ui)
+    mark_stage_complete(project_dir, "architect")
+    ui.stage_done("architect")
 
     return {
         "architecture": architecture,

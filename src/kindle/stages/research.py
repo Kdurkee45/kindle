@@ -9,13 +9,8 @@ from __future__ import annotations
 import json
 
 from kindle.agent import run_agent
-from kindle.artifacts import save_artifact
-from kindle.stages._helpers import (
-    cleanup_workspace_files,
-    load_text_artifact,
-    stage_setup,
-    stage_teardown,
-)
+from kindle.artifacts import mark_stage_complete, save_artifact
+from kindle.stages._helpers import stage_setup
 from kindle.state import KindleState
 from kindle.ui import UI
 
@@ -97,13 +92,15 @@ async def research_node(state: KindleState, ui: UI) -> dict:
 
     # Read the report
     report_path = ws / "research_report.md"
-    research_report = load_text_artifact(report_path) or result.text
+    research_report = report_path.read_text() if report_path.exists() else result.text
     save_artifact(project_dir, "research_report.md", research_report)
 
     # Clean up
-    cleanup_workspace_files(report_path)
+    if report_path.exists():
+        report_path.unlink()
 
-    stage_teardown(project_dir, "research", ui)
+    mark_stage_complete(project_dir, "research")
+    ui.stage_done("research")
 
     return {
         "research_report": research_report,
