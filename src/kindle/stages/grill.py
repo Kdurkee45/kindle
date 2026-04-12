@@ -103,47 +103,13 @@ Write the file to the current working directory.
 """
 
 
-async def grill_node(state: KindleState, ui: UI) -> dict:
-    """LangGraph node: interrogate the human to build a complete feature spec."""
-    ui.stage_start("grill")
-    project_dir = state["project_dir"]
-    idea = state.get("idea", "")
-    stack_pref = state.get("stack_preference", "")
-    ws = workspace_path(project_dir)
+def _walk_questions(open_questions: list[dict], ui: UI) -> tuple[list[str], list[dict]]:
+    """Walk through questions interactively, collecting answers and building a transcript.
 
-    # Generate questions via agent
-    gen_prompt = f"Generate focused questions for building this application.\n\nIDEA: {idea}"
-    if stack_pref:
-        gen_prompt += f"\nSTACK PREFERENCE: {stack_pref}"
-    gen_prompt += "\n\nWrite open_questions.json to the working directory."
-
-    await run_agent(
-        persona="Principal Product Interrogator",
-        system_prompt=INTERROGATION_SYSTEM_PROMPT,
-        user_prompt=gen_prompt,
-        cwd=str(ws),
-        project_dir=project_dir,
-        stage="grill",
-        ui=ui,
-        model=state.get("model"),
-        max_turns=10,
-        allowed_tools=["Read", "Write", "Bash"],
-    )
-
-    # Load generated questions
-    questions_path = ws / "open_questions.json"
-    open_questions: list[dict] = []
-    if questions_path.exists():
-        try:
-            data = json.loads(questions_path.read_text())
-            open_questions = data if isinstance(data, list) else []
-        except json.JSONDecodeError:
-            ui.error("Failed to parse open_questions.json")
-
-    if not open_questions:
-        ui.info("No questions generated — proceeding with idea as-is.")
-
-    # Walk through questions one at a time
+    Returns a ``(transcript_lines, decisions)`` tuple.  When the user types
+    ``"done"``, the current question and all remaining ones are filled with their
+    recommended answers automatically.
+    """
     transcript_lines: list[str] = []
     decisions: list[dict] = []
 
@@ -188,6 +154,63 @@ async def grill_node(state: KindleState, ui: UI) -> dict:
 
         decisions.append({"question": question, "recommended": recommended, "answer": answer, "category": category})
 
+    return transcript_lines, decisions
+
+
+def _parse_feature_spec(raw_output: str, ui: UI) -> dict:
+    """Parse feature spec JSON string, returning an empty dict on failure."""
+    if not raw_output:
+        return {}
+    try:
+        return json.loads(raw_output)
+    except json.JSONDecodeError:
+        ui.error("Failed to parse feature_spec.json.")
+        return {}
+
+
+async def grill_node(state: KindleState, ui: UI) -> dict:
+    """LangGraph node: interrogate the human to build a complete feature spec."""
+    ui.stage_start("grill")
+    project_dir = state["project_dir"]
+    idea = state.get("idea", "")
+    stack_pref = state.get("stack_preference", "")
+    ws = workspace_path(project_dir)
+
+    # Generate questions via agent
+    gen_prompt = f"Generate focused questions for building this application.\n\nIDEA: {idea}"
+    if stack_pref:
+        gen_prompt += f"\nSTACK PREFERENCE: {stack_pref}"
+    gen_prompt += "\n\nWrite open_questions.json to the working directory."
+
+    await run_agent(
+        persona="Principal Product Interrogator",
+        system_prompt=INTERROGATION_SYSTEM_PROMPT,
+        user_prompt=gen_prompt,
+        cwd=str(ws),
+        project_dir=project_dir,
+        stage="grill",
+        ui=ui,
+        model=state.get("model"),
+        max_turns=10,
+        allowed_tools=["Read", "Write", "Bash"],
+    )
+
+    # Load generated questions
+    questions_path = ws / "open_questions.json"
+    open_questions: list[dict] = []
+    if questions_path.exists():
+        try:
+            data = json.loads(questions_path.read_text())
+            open_questions = data if isinstance(data, list) else []
+        except json.JSONDecodeError:
+            ui.error("Failed to parse open_questions.json")
+
+    if not open_questions:
+        ui.info("No questions generated — proceeding with idea as-is.")
+
+    # Walk through questions one at a time
+    transcript_lines, decisions = _walk_questions(open_questions, ui)
+
     grill_transcript = "\n".join(transcript_lines)
     save_artifact(project_dir, "grill_transcript.md", grill_transcript)
 
@@ -217,12 +240,8 @@ async def grill_node(state: KindleState, ui: UI) -> dict:
 
     # Read compiled spec
     spec_path = ws / "feature_spec.json"
-    feature_spec: dict = {}
-    if spec_path.exists():
-        try:
-            feature_spec = json.loads(spec_path.read_text())
-        except json.JSONDecodeError:
-            ui.error("Failed to parse feature_spec.json.")
+    raw_spec = spec_path.read_text() if spec_path.exists() else ""
+    feature_spec = _parse_feature_spec(raw_spec, ui)
 
     save_artifact(project_dir, "feature_spec.json", json.dumps(feature_spec, indent=2))
 
