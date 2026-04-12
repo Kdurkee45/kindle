@@ -11,7 +11,8 @@ from __future__ import annotations
 import json
 
 from kindle.agent import run_agent
-from kindle.artifacts import mark_stage_complete, save_artifact, workspace_path
+from kindle.artifacts import mark_stage_complete, save_artifact
+from kindle.stages._helpers import stage_setup
 from kindle.state import KindleState
 from kindle.ui import UI
 
@@ -132,11 +133,9 @@ def _fill_remaining_defaults(
 
 async def grill_node(state: KindleState, ui: UI) -> dict:
     """LangGraph node: interrogate the human to build a complete feature spec."""
-    ui.stage_start("grill")
-    project_dir = state["project_dir"]
+    project_dir, ws = stage_setup(state, ui, "grill")
     idea = state.get("idea", "")
     stack_pref = state.get("stack_preference", "")
-    ws = workspace_path(project_dir)
 
     # Generate questions via agent
     gen_prompt = f"Generate focused questions for building this application.\n\nIDEA: {idea}"

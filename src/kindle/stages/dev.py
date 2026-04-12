@@ -11,6 +11,7 @@ import json
 
 from kindle.agent import run_agent
 from kindle.artifacts import mark_stage_complete, save_artifact, workspace_path
+from kindle.stages._helpers import stage_setup
 from kindle.state import KindleState
 from kindle.ui import UI
 
@@ -129,8 +130,7 @@ def _topological_sort(tasks: list[dict]) -> list[list[dict]]:
 
 async def dev_node(state: KindleState, ui: UI) -> dict:
     """LangGraph node: build all dev tasks in parallel with dependency ordering."""
-    ui.stage_start("dev")
-    project_dir = state["project_dir"]
+    project_dir, _ws = stage_setup(state, ui, "dev")
     dev_tasks = state.get("dev_tasks", [])
     max_concurrent = state.get("max_concurrent_agents", 4)
 

@@ -9,7 +9,8 @@ from __future__ import annotations
 import json
 
 from kindle.agent import run_agent
-from kindle.artifacts import mark_stage_complete, save_artifact, workspace_path
+from kindle.artifacts import mark_stage_complete, save_artifact
+from kindle.stages._helpers import stage_setup
 from kindle.state import KindleState
 from kindle.ui import UI
 
@@ -59,12 +60,10 @@ Be thorough but factual. Cite specific library names and versions where possible
 
 async def research_node(state: KindleState, ui: UI) -> dict:
     """LangGraph node: research the technology landscape."""
-    ui.stage_start("research")
-    project_dir = state["project_dir"]
+    project_dir, ws = stage_setup(state, ui, "research")
     feature_spec = state.get("feature_spec", {})
     idea = state.get("idea", "")
     stack_pref = state.get("stack_preference", "")
-    ws = workspace_path(project_dir)
 
     prompt_parts = [
         "Research the technology landscape for building this application.",

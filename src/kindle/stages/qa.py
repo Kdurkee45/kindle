@@ -13,7 +13,8 @@ import json
 from pathlib import Path
 
 from kindle.agent import run_agent
-from kindle.artifacts import mark_stage_complete, save_artifact, workspace_path
+from kindle.artifacts import mark_stage_complete, save_artifact
+from kindle.stages._helpers import stage_setup
 from kindle.state import KindleState
 from kindle.ui import UI
 
@@ -121,11 +122,9 @@ def _parse_verdict(report: str) -> bool:
 
 async def qa_node(state: KindleState, ui: UI) -> dict:
     """LangGraph node: run Technical QA + Product Audit."""
-    ui.stage_start("qa")
-    project_dir = state["project_dir"]
+    project_dir, ws = stage_setup(state, ui, "qa")
     feature_spec = state.get("feature_spec", {})
     architecture = state.get("architecture", "")
-    ws = workspace_path(project_dir)
     qa_retries = state.get("qa_retries", 0)
     cpo_retries = state.get("cpo_retries", 0)
 
