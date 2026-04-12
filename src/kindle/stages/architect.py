@@ -100,9 +100,7 @@ async def architect_node(state: KindleState, ui: UI) -> dict:
     ]
     if stack_pref:
         prompt_parts.append(f"\nSTACK PREFERENCE: {stack_pref}")
-    prompt_parts.append(
-        "\nWrite architecture.md and dev_tasks.json to the working directory."
-    )
+    prompt_parts.append("\nWrite architecture.md and dev_tasks.json to the working directory.")
 
     result = await run_agent(
         persona="Principal Solution Architect",
