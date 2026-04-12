@@ -22,11 +22,6 @@ from kindle.stages.qa import qa_router
 # ---------------------------------------------------------------------------
 
 
-def _make_ui() -> MagicMock:
-    """Return a mock UI instance with attributes graph.py expects."""
-    return MagicMock()
-
-
 def _mock_all_nodes() -> dict:
     """Return a dict of patches replacing every stage node with an AsyncMock."""
     return {
@@ -42,7 +37,7 @@ def _mock_all_nodes() -> dict:
 
 def _build_with_mocks(entry_stage: str = "grill") -> CompiledStateGraph:
     """Build the graph with all stage nodes mocked out."""
-    ui = _make_ui()
+    ui = MagicMock()
     mocks = _mock_all_nodes()
     with (
         patch("kindle.graph.grill_node", mocks["kindle.graph.grill_node"]),
@@ -198,7 +193,7 @@ class TestWrap:
     async def test_wrapper_passes_ui_to_inner_function(self) -> None:
         """The wrapped function should call the original with (state, ui)."""
         inner = AsyncMock(return_value={"result": "ok"})
-        ui = _make_ui()
+        ui = MagicMock()
 
         wrapped = _wrap(inner, ui)
         state = {"idea": "test"}
@@ -214,7 +209,7 @@ class TestWrap:
         async def my_node(state, ui):
             return {}
 
-        ui = _make_ui()
+        ui = MagicMock()
         wrapped = _wrap(my_node, ui)
         assert wrapped.__name__ == "my_node"
 
@@ -222,7 +217,7 @@ class TestWrap:
     async def test_wrapper_returns_inner_result(self) -> None:
         """The return value should be forwarded from the inner function."""
         inner = AsyncMock(return_value={"qa_passed": True, "qa_report": "all good"})
-        ui = _make_ui()
+        ui = MagicMock()
 
         wrapped = _wrap(inner, ui)
         result = await wrapped({})
@@ -232,7 +227,7 @@ class TestWrap:
     async def test_wrapper_propagates_exception(self) -> None:
         """If the inner function raises, the wrapper should propagate it."""
         inner = AsyncMock(side_effect=RuntimeError("stage failed"))
-        ui = _make_ui()
+        ui = MagicMock()
 
         wrapped = _wrap(inner, ui)
         with pytest.raises(RuntimeError, match="stage failed"):
@@ -443,7 +438,7 @@ class TestNodeFactories:
 
     @pytest.mark.parametrize("stage", ORDERED_STAGES)
     def test_factory_returns_list_of_name_fn_pairs(self, stage: str) -> None:
-        ui = _make_ui()
+        ui = MagicMock()
         pairs = _NODE_FACTORIES[stage](ui)
         assert isinstance(pairs, list)
         assert len(pairs) >= 1
@@ -454,7 +449,7 @@ class TestNodeFactories:
     @pytest.mark.parametrize("stage", ORDERED_STAGES)
     def test_factory_name_matches_stage(self, stage: str) -> None:
         """The node name from the factory should match the stage name."""
-        ui = _make_ui()
+        ui = MagicMock()
         pairs = _NODE_FACTORIES[stage](ui)
         names = [name for name, _ in pairs]
         assert stage in names

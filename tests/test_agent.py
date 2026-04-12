@@ -19,13 +19,6 @@ from kindle.agent import (
 # ---------------------------------------------------------------------------
 
 
-def _make_ui() -> MagicMock:
-    """Return a mock UI with the methods run_agent calls."""
-    ui = MagicMock()
-    ui.stage_log = MagicMock()
-    return ui
-
-
 def _text_block(text: str) -> MagicMock:
     """Create a mock content block that has a .text attribute but no .name."""
     block = MagicMock(spec=[])  # empty spec — no attrs by default
@@ -57,7 +50,7 @@ async def _run_agent_defaults(ui: MagicMock | None = None, **overrides) -> Agent
         cwd="/tmp",
         project_dir="/tmp/proj",
         stage="test_stage",
-        ui=ui or _make_ui(),
+        ui=ui or MagicMock(),
     )
     kw.update(overrides)
     return await run_agent(**kw)
@@ -107,7 +100,7 @@ class TestProcessMessage:
         text_parts: list[str] = []
         tool_calls: list[dict] = []
         msg = _message(_text_block("hello world"))
-        ui = _make_ui()
+        ui = MagicMock()
 
         _process_message(msg, text_parts, tool_calls, "stg", ui, "/tmp")
 
@@ -119,7 +112,7 @@ class TestProcessMessage:
         text_parts: list[str] = []
         tool_calls: list[dict] = []
         msg = _message(_tool_block("Bash", {"command": "ls"}))
-        ui = _make_ui()
+        ui = MagicMock()
 
         _process_message(msg, text_parts, tool_calls, "stg", ui, "/tmp")
 
@@ -131,7 +124,7 @@ class TestProcessMessage:
         text_parts: list[str] = []
         tool_calls: list[dict] = []
         msg = _message(_text_block("thinking…"), _tool_block("Grep"))
-        ui = _make_ui()
+        ui = MagicMock()
 
         _process_message(msg, text_parts, tool_calls, "stg", ui, "/tmp")
 
@@ -144,7 +137,7 @@ class TestProcessMessage:
         text_parts: list[str] = []
         tool_calls: list[dict] = []
         msg = MagicMock(spec=[])  # no .content
-        ui = _make_ui()
+        ui = MagicMock()
 
         _process_message(msg, text_parts, tool_calls, "stg", ui, "/tmp")
 
@@ -158,7 +151,7 @@ class TestProcessMessage:
         block = MagicMock(spec=[])
         block.text = ""
         msg = _message(block)
-        ui = _make_ui()
+        ui = MagicMock()
 
         _process_message(msg, text_parts, tool_calls, "stg", ui, "/tmp")
 
@@ -170,7 +163,7 @@ class TestProcessMessage:
         tool_calls: list[dict] = []
         long_text = "A" * 300
         msg = _message(_text_block(long_text))
-        ui = _make_ui()
+        ui = MagicMock()
 
         _process_message(msg, text_parts, tool_calls, "stg", ui, "/tmp")
 
@@ -183,7 +176,7 @@ class TestProcessMessage:
         text_parts: list[str] = []
         tool_calls: list[dict] = []
         msg = _message(_tool_block("Write"))
-        ui = _make_ui()
+        ui = MagicMock()
 
         _process_message(msg, text_parts, tool_calls, "stg", ui, "/tmp")
 
@@ -203,7 +196,7 @@ class TestRunAgentHappyPath:
     @pytest.mark.asyncio
     async def test_returns_agent_result(self) -> None:
         msg = _message(_text_block("Hello from agent"))
-        ui = _make_ui()
+        ui = MagicMock()
 
         async def fake_query(**kwargs):
             yield msg
@@ -222,7 +215,7 @@ class TestRunAgentHappyPath:
     async def test_turns_used_equals_message_count(self) -> None:
         msg1 = _message(_text_block("first"))
         msg2 = _message(_text_block("second"))
-        ui = _make_ui()
+        ui = MagicMock()
 
         async def fake_query(**kwargs):
             yield msg1
@@ -241,7 +234,7 @@ class TestRunAgentHappyPath:
     @pytest.mark.asyncio
     async def test_raw_messages_collected(self) -> None:
         msg = _message(_text_block("hi"))
-        ui = _make_ui()
+        ui = MagicMock()
 
         async def fake_query(**kwargs):
             yield msg
@@ -258,7 +251,7 @@ class TestRunAgentHappyPath:
     @pytest.mark.asyncio
     async def test_tool_calls_collected(self) -> None:
         msg = _message(_tool_block("Bash", {"command": "echo hi"}))
-        ui = _make_ui()
+        ui = MagicMock()
 
         async def fake_query(**kwargs):
             yield msg
@@ -275,7 +268,7 @@ class TestRunAgentHappyPath:
     @pytest.mark.asyncio
     async def test_elapsed_seconds_is_positive(self) -> None:
         msg = _message(_text_block("ok"))
-        ui = _make_ui()
+        ui = MagicMock()
 
         async def fake_query(**kwargs):
             yield msg
@@ -292,7 +285,7 @@ class TestRunAgentHappyPath:
     @pytest.mark.asyncio
     async def test_save_log_called(self) -> None:
         msg = _message(_text_block("output"))
-        ui = _make_ui()
+        ui = MagicMock()
 
         async def fake_query(**kwargs):
             yield msg
@@ -310,7 +303,7 @@ class TestRunAgentHappyPath:
     @pytest.mark.asyncio
     async def test_empty_stream_returns_empty_text(self) -> None:
         """An agent that produces no messages returns empty text."""
-        ui = _make_ui()
+        ui = MagicMock()
 
         async def fake_query(**kwargs):
             return
@@ -338,7 +331,7 @@ class TestRunAgentOptions:
     @pytest.mark.asyncio
     async def test_default_allowed_tools(self) -> None:
         """When allowed_tools is None, the seven default tools are used."""
-        ui = _make_ui()
+        ui = MagicMock()
 
         async def fake_query(**kwargs):
             return
@@ -366,7 +359,7 @@ class TestRunAgentOptions:
     @pytest.mark.asyncio
     async def test_custom_allowed_tools(self) -> None:
         """Explicit allowed_tools are passed through."""
-        ui = _make_ui()
+        ui = MagicMock()
 
         async def fake_query(**kwargs):
             return
@@ -386,7 +379,7 @@ class TestRunAgentOptions:
     @pytest.mark.asyncio
     async def test_model_included_when_set(self) -> None:
         """When model is provided, it is passed to ClaudeAgentOptions."""
-        ui = _make_ui()
+        ui = MagicMock()
 
         async def fake_query(**kwargs):
             return
@@ -406,7 +399,7 @@ class TestRunAgentOptions:
     @pytest.mark.asyncio
     async def test_model_omitted_when_none(self) -> None:
         """When model is None, it is NOT passed to ClaudeAgentOptions."""
-        ui = _make_ui()
+        ui = MagicMock()
 
         async def fake_query(**kwargs):
             return
@@ -426,7 +419,7 @@ class TestRunAgentOptions:
     @pytest.mark.asyncio
     async def test_max_turns_passed(self) -> None:
         """max_turns is forwarded to ClaudeAgentOptions."""
-        ui = _make_ui()
+        ui = MagicMock()
 
         async def fake_query(**kwargs):
             return
@@ -446,7 +439,7 @@ class TestRunAgentOptions:
     @pytest.mark.asyncio
     async def test_permission_mode_is_bypass(self) -> None:
         """Permission mode is always bypassPermissions."""
-        ui = _make_ui()
+        ui = MagicMock()
 
         async def fake_query(**kwargs):
             return
@@ -466,7 +459,7 @@ class TestRunAgentOptions:
     @pytest.mark.asyncio
     async def test_query_receives_user_prompt(self) -> None:
         """query() is called with prompt=user_prompt."""
-        ui = _make_ui()
+        ui = MagicMock()
 
         async def fake_query(**kwargs):
             return
@@ -502,7 +495,7 @@ class TestRunAgentRetry:
     @pytest.mark.asyncio
     async def test_retries_on_connection_error(self) -> None:
         """ConnectionError triggers retry; success on second attempt returns result."""
-        ui = _make_ui()
+        ui = MagicMock()
         msg = _message(_text_block("recovered"))
         call_count = 0
 
@@ -532,7 +525,7 @@ class TestRunAgentRetry:
     @pytest.mark.asyncio
     async def test_retries_on_timeout_error(self) -> None:
         """TimeoutError triggers retry."""
-        ui = _make_ui()
+        ui = MagicMock()
         msg = _message(_text_block("ok"))
         call_count = 0
 
@@ -560,7 +553,7 @@ class TestRunAgentRetry:
     @pytest.mark.asyncio
     async def test_retries_on_os_error(self) -> None:
         """OSError triggers retry."""
-        ui = _make_ui()
+        ui = MagicMock()
         msg = _message(_text_block("ok"))
         call_count = 0
 
@@ -588,7 +581,7 @@ class TestRunAgentRetry:
     @pytest.mark.asyncio
     async def test_exponential_backoff_delays(self) -> None:
         """Each retry sleeps with exponential backoff: base^attempt."""
-        ui = _make_ui()
+        ui = MagicMock()
 
         def always_fail(**kwargs):
             raise ConnectionError("down")
@@ -610,7 +603,7 @@ class TestRunAgentRetry:
     @pytest.mark.asyncio
     async def test_all_retries_exhausted_raises_runtime_error(self) -> None:
         """After MAX_RETRIES transient failures, RuntimeError is raised."""
-        ui = _make_ui()
+        ui = MagicMock()
 
         def always_fail(**kwargs):
             raise ConnectionError("connection refused")
@@ -627,7 +620,7 @@ class TestRunAgentRetry:
     @pytest.mark.asyncio
     async def test_exhausted_retries_includes_last_error_message(self) -> None:
         """The RuntimeError message includes the text of the last exception."""
-        ui = _make_ui()
+        ui = MagicMock()
         call_count = 0
 
         def always_fail(**kwargs):
@@ -647,7 +640,7 @@ class TestRunAgentRetry:
     @pytest.mark.asyncio
     async def test_non_transient_error_not_retried(self) -> None:
         """Errors not in (ConnectionError, TimeoutError, OSError) propagate immediately."""
-        ui = _make_ui()
+        ui = MagicMock()
         call_count = 0
 
         def bad_query(**kwargs):
@@ -670,7 +663,7 @@ class TestRunAgentRetry:
     @pytest.mark.asyncio
     async def test_retry_logs_warning(self) -> None:
         """Each retry attempt logs a warning via ui.stage_log."""
-        ui = _make_ui()
+        ui = MagicMock()
         msg = _message(_text_block("ok"))
         call_count = 0
 
@@ -701,7 +694,7 @@ class TestRunAgentRetry:
     @pytest.mark.asyncio
     async def test_query_called_max_retries_times_on_total_failure(self) -> None:
         """query() is invoked exactly MAX_RETRIES times when every attempt fails."""
-        ui = _make_ui()
+        ui = MagicMock()
         call_count = 0
 
         def always_fail(**kwargs):
@@ -732,7 +725,7 @@ class TestRunAgentMidStreamError:
     @pytest.mark.asyncio
     async def test_mid_stream_connection_error_retried(self) -> None:
         """ConnectionError raised mid-iteration triggers retry."""
-        ui = _make_ui()
+        ui = MagicMock()
         call_count = 0
 
         def flaky_stream(**kwargs):

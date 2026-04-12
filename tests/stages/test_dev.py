@@ -10,17 +10,11 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from kindle.stages.dev import SYSTEM_PROMPT, _run_task, _topological_sort, dev_node
+from tests.constants import SAMPLE_FEATURE_SPEC
 
 # ---------------------------------------------------------------------------
 # Sample data
 # ---------------------------------------------------------------------------
-
-SAMPLE_FEATURE_SPEC = {
-    "app_name": "TaskFlow",
-    "idea": "a task management app",
-    "core_features": ["task CRUD", "auth"],
-    "tech_constraints": ["React frontend"],
-}
 
 SAMPLE_ARCHITECTURE = """\
 # Architecture
@@ -51,42 +45,25 @@ SAMPLE_DEV_TASKS: list[dict] = [
 
 
 # ---------------------------------------------------------------------------
-# Helpers
+# Fixtures
 # ---------------------------------------------------------------------------
 
 
-def _make_state(tmp_path: Path, **overrides) -> dict:
-    """Build a minimal KindleState dict pointing at *tmp_path* as project_dir."""
-    project_dir = tmp_path / "project"
-    (project_dir / "artifacts").mkdir(parents=True, exist_ok=True)
-    (project_dir / "logs").mkdir(parents=True, exist_ok=True)
-    (project_dir / "workspace").mkdir(parents=True, exist_ok=True)
-    # metadata.json needed by mark_stage_complete
-    meta = {"project_id": "kindle_test1234", "stages_completed": []}
-    (project_dir / "metadata.json").write_text(json.dumps(meta))
+@pytest.fixture
+def dev_state(make_state):
+    """Factory with dev-stage defaults pre-applied."""
 
-    state: dict = {
-        "project_dir": str(project_dir),
-        "idea": "a task management app",
-        "feature_spec": SAMPLE_FEATURE_SPEC,
-        "architecture": SAMPLE_ARCHITECTURE,
-        "dev_tasks": SAMPLE_DEV_TASKS,
-        "max_concurrent_agents": 4,
-    }
-    state.update(overrides)
-    return state
+    def _factory(**overrides):
+        defaults = {
+            "feature_spec": SAMPLE_FEATURE_SPEC,
+            "architecture": SAMPLE_ARCHITECTURE,
+            "dev_tasks": SAMPLE_DEV_TASKS,
+            "max_concurrent_agents": 4,
+        }
+        defaults.update(overrides)
+        return make_state(create_workspace=True, **defaults)
 
-
-def _make_ui() -> MagicMock:
-    """Return a mock UI with the methods dev_node actually calls."""
-    ui = MagicMock()
-    ui.stage_start = MagicMock()
-    ui.stage_done = MagicMock()
-    ui.info = MagicMock()
-    ui.error = MagicMock()
-    ui.task_start = MagicMock()
-    ui.task_done = MagicMock()
-    return ui
+    return _factory
 
 
 def _make_agent_result(elapsed: float = 1.5, turns: int = 3) -> MagicMock:
@@ -218,10 +195,10 @@ class TestRunTask:
     """Tests for the _run_task coroutine."""
 
     @pytest.mark.asyncio
-    async def test_run_task_returns_correct_result(self, tmp_path: Path) -> None:
+    async def test_run_task_returns_correct_result(self, tmp_path: Path, dev_state, make_ui) -> None:
         """_run_task should return a dict with task metadata and agent stats."""
-        state = _make_state(tmp_path)
-        ui = _make_ui()
+        state = dev_state()
+        ui = make_ui()
         task = SAMPLE_DEV_TASKS[0]
         semaphore = asyncio.Semaphore(4)
 
@@ -238,10 +215,10 @@ class TestRunTask:
         assert result["turns_used"] == 7
 
     @pytest.mark.asyncio
-    async def test_run_task_calls_agent_with_correct_args(self, tmp_path: Path) -> None:
+    async def test_run_task_calls_agent_with_correct_args(self, tmp_path: Path, dev_state, make_ui) -> None:
         """Verify run_agent receives proper persona, system prompt, and user prompt."""
-        state = _make_state(tmp_path)
-        ui = _make_ui()
+        state = dev_state()
+        ui = make_ui()
         task = SAMPLE_DEV_TASKS[0]
         semaphore = asyncio.Semaphore(2)
 
@@ -261,10 +238,10 @@ class TestRunTask:
         assert "pyproject.toml exists" in kwargs["user_prompt"]
 
     @pytest.mark.asyncio
-    async def test_run_task_includes_feature_spec_and_architecture(self, tmp_path: Path) -> None:
+    async def test_run_task_includes_feature_spec_and_architecture(self, tmp_path: Path, dev_state, make_ui) -> None:
         """The user prompt should contain the feature spec and architecture from state."""
-        state = _make_state(tmp_path)
-        ui = _make_ui()
+        state = dev_state()
+        ui = make_ui()
         task = SAMPLE_DEV_TASKS[0]
         semaphore = asyncio.Semaphore(1)
 
@@ -278,10 +255,10 @@ class TestRunTask:
         assert "React 18.x frontend" in prompt  # from architecture
 
     @pytest.mark.asyncio
-    async def test_run_task_ui_lifecycle(self, tmp_path: Path) -> None:
+    async def test_run_task_ui_lifecycle(self, tmp_path: Path, dev_state, make_ui) -> None:
         """_run_task should call task_start and task_done on the UI."""
-        state = _make_state(tmp_path)
-        ui = _make_ui()
+        state = dev_state()
+        ui = make_ui()
         task = SAMPLE_DEV_TASKS[0]
         semaphore = asyncio.Semaphore(4)
 
@@ -294,10 +271,10 @@ class TestRunTask:
         ui.task_done.assert_called_once_with("task_01")
 
     @pytest.mark.asyncio
-    async def test_run_task_uses_default_task_id(self, tmp_path: Path) -> None:
+    async def test_run_task_uses_default_task_id(self, tmp_path: Path, dev_state, make_ui) -> None:
         """Tasks without task_id fall back to index-based ID."""
-        state = _make_state(tmp_path)
-        ui = _make_ui()
+        state = dev_state()
+        ui = make_ui()
         task = {"title": "No ID task", "description": "Test", "dependencies": []}
         semaphore = asyncio.Semaphore(4)
 
@@ -309,10 +286,10 @@ class TestRunTask:
         assert result["task_id"] == "task_03"
 
     @pytest.mark.asyncio
-    async def test_run_task_passes_model_and_max_turns(self, tmp_path: Path) -> None:
+    async def test_run_task_passes_model_and_max_turns(self, tmp_path: Path, dev_state, make_ui) -> None:
         """State model and max_agent_turns flow through to run_agent."""
-        state = _make_state(tmp_path, model="opus", max_agent_turns=25)
-        ui = _make_ui()
+        state = dev_state(model="opus", max_agent_turns=25)
+        ui = make_ui()
         task = SAMPLE_DEV_TASKS[0]
         semaphore = asyncio.Semaphore(4)
 
@@ -335,10 +312,10 @@ class TestDevNodeHappyPath:
     """Tests for the dev_node LangGraph entry point."""
 
     @pytest.mark.asyncio
-    async def test_dev_node_returns_current_stage(self, tmp_path: Path) -> None:
+    async def test_dev_node_returns_current_stage(self, tmp_path: Path, dev_state, make_ui) -> None:
         """dev_node should return {'current_stage': 'dev'}."""
-        state = _make_state(tmp_path)
-        ui = _make_ui()
+        state = dev_state()
+        ui = make_ui()
 
         mock_agent = AsyncMock(return_value=_make_agent_result())
 
@@ -348,10 +325,10 @@ class TestDevNodeHappyPath:
         assert result == {"current_stage": "dev"}
 
     @pytest.mark.asyncio
-    async def test_dev_node_saves_results_artifact(self, tmp_path: Path) -> None:
+    async def test_dev_node_saves_results_artifact(self, tmp_path: Path, dev_state, make_ui) -> None:
         """dev_results.json should be written with one entry per task."""
-        state = _make_state(tmp_path)
-        ui = _make_ui()
+        state = dev_state()
+        ui = make_ui()
 
         mock_agent = AsyncMock(return_value=_make_agent_result(elapsed=1.0, turns=2))
 
@@ -368,10 +345,10 @@ class TestDevNodeHappyPath:
         assert results[1]["status"] == "completed"
 
     @pytest.mark.asyncio
-    async def test_dev_node_marks_stage_complete(self, tmp_path: Path) -> None:
+    async def test_dev_node_marks_stage_complete(self, tmp_path: Path, dev_state, make_ui) -> None:
         """dev should appear in stages_completed after successful run."""
-        state = _make_state(tmp_path)
-        ui = _make_ui()
+        state = dev_state()
+        ui = make_ui()
 
         mock_agent = AsyncMock(return_value=_make_agent_result())
 
@@ -383,10 +360,10 @@ class TestDevNodeHappyPath:
         assert "dev" in meta["stages_completed"]
 
     @pytest.mark.asyncio
-    async def test_dev_node_ui_lifecycle(self, tmp_path: Path) -> None:
+    async def test_dev_node_ui_lifecycle(self, tmp_path: Path, dev_state, make_ui) -> None:
         """stage_start and stage_done should be called."""
-        state = _make_state(tmp_path)
-        ui = _make_ui()
+        state = dev_state()
+        ui = make_ui()
 
         mock_agent = AsyncMock(return_value=_make_agent_result())
 
@@ -397,10 +374,10 @@ class TestDevNodeHappyPath:
         ui.stage_done.assert_called_once_with("dev")
 
     @pytest.mark.asyncio
-    async def test_dev_node_respects_dependency_ordering(self, tmp_path: Path) -> None:
+    async def test_dev_node_respects_dependency_ordering(self, tmp_path: Path, dev_state, make_ui) -> None:
         """task_02 depends on task_01; verify agent is called for task_01 first."""
-        state = _make_state(tmp_path)
-        ui = _make_ui()
+        state = dev_state()
+        ui = make_ui()
         call_order: list[str] = []
 
         async def fake_run_agent(**kwargs):
@@ -418,10 +395,10 @@ class TestDevNodeHappyPath:
         assert call_order.index("dev_task_01") < call_order.index("dev_task_02")
 
     @pytest.mark.asyncio
-    async def test_dev_node_layer_info_messages(self, tmp_path: Path) -> None:
+    async def test_dev_node_layer_info_messages(self, tmp_path: Path, dev_state, make_ui) -> None:
         """UI should report layer progress messages."""
-        state = _make_state(tmp_path)
-        ui = _make_ui()
+        state = dev_state()
+        ui = make_ui()
 
         mock_agent = AsyncMock(return_value=_make_agent_result())
 
@@ -437,10 +414,10 @@ class TestDevNodeNoTasks:
     """Tests for when dev_tasks is empty."""
 
     @pytest.mark.asyncio
-    async def test_empty_tasks_skips_gracefully(self, tmp_path: Path) -> None:
+    async def test_empty_tasks_skips_gracefully(self, tmp_path: Path, dev_state, make_ui) -> None:
         """No dev tasks should skip agent calls and log an error."""
-        state = _make_state(tmp_path, dev_tasks=[])
-        ui = _make_ui()
+        state = dev_state(dev_tasks=[])
+        ui = make_ui()
 
         result = await dev_node(state, ui)
 
@@ -448,10 +425,10 @@ class TestDevNodeNoTasks:
         ui.error.assert_called_once_with("No dev tasks found — skipping dev stage.")
 
     @pytest.mark.asyncio
-    async def test_empty_tasks_still_marks_complete(self, tmp_path: Path) -> None:
+    async def test_empty_tasks_still_marks_complete(self, tmp_path: Path, dev_state, make_ui) -> None:
         """Even with no tasks, stage should be marked complete."""
-        state = _make_state(tmp_path, dev_tasks=[])
-        ui = _make_ui()
+        state = dev_state(dev_tasks=[])
+        ui = make_ui()
 
         await dev_node(state, ui)
 
@@ -460,10 +437,10 @@ class TestDevNodeNoTasks:
         assert "dev" in meta["stages_completed"]
 
     @pytest.mark.asyncio
-    async def test_empty_tasks_calls_stage_lifecycle(self, tmp_path: Path) -> None:
+    async def test_empty_tasks_calls_stage_lifecycle(self, tmp_path: Path, dev_state, make_ui) -> None:
         """stage_start and stage_done are still called when skipping."""
-        state = _make_state(tmp_path, dev_tasks=[])
-        ui = _make_ui()
+        state = dev_state(dev_tasks=[])
+        ui = make_ui()
 
         await dev_node(state, ui)
 
@@ -475,13 +452,13 @@ class TestDevNodeErrorHandling:
     """Tests for error handling in dev_node."""
 
     @pytest.mark.asyncio
-    async def test_exception_captured_in_results(self, tmp_path: Path) -> None:
+    async def test_exception_captured_in_results(self, tmp_path: Path, dev_state, make_ui) -> None:
         """If run_agent throws, the error is captured — not re-raised."""
         single_task = [
             {"task_id": "fail_task", "title": "Boom", "dependencies": [], "description": "explodes"},
         ]
-        state = _make_state(tmp_path, dev_tasks=single_task)
-        ui = _make_ui()
+        state = dev_state(dev_tasks=single_task)
+        ui = make_ui()
 
         mock_agent = AsyncMock(side_effect=RuntimeError("agent crashed"))
 
@@ -501,14 +478,14 @@ class TestDevNodeErrorHandling:
         assert results[0]["error"] == "agent crashed"
 
     @pytest.mark.asyncio
-    async def test_partial_failure_other_tasks_still_complete(self, tmp_path: Path) -> None:
+    async def test_partial_failure_other_tasks_still_complete(self, tmp_path: Path, dev_state, make_ui) -> None:
         """If one task fails in a layer, others in the same layer still succeed."""
         tasks = [
             {"task_id": "ok_task", "title": "Works", "dependencies": [], "description": "fine"},
             {"task_id": "bad_task", "title": "Fails", "dependencies": [], "description": "broken"},
         ]
-        state = _make_state(tmp_path, dev_tasks=tasks)
-        ui = _make_ui()
+        state = dev_state(dev_tasks=tasks)
+        ui = make_ui()
 
         async def selective_agent(**kwargs):
             if "bad_task" in kwargs.get("stage", ""):
@@ -530,14 +507,14 @@ class TestDevNodeErrorHandling:
         assert "failed" in statuses.values()
 
     @pytest.mark.asyncio
-    async def test_failure_in_later_layer_after_success(self, tmp_path: Path) -> None:
+    async def test_failure_in_later_layer_after_success(self, tmp_path: Path, dev_state, make_ui) -> None:
         """First layer succeeds, second layer fails — both captured."""
         tasks = [
             {"task_id": "t1", "title": "OK", "dependencies": [], "description": "fine"},
             {"task_id": "t2", "title": "Boom", "dependencies": ["t1"], "description": "fails"},
         ]
-        state = _make_state(tmp_path, dev_tasks=tasks)
-        ui = _make_ui()
+        state = dev_state(dev_tasks=tasks)
+        ui = make_ui()
 
         call_count = 0
 
@@ -569,13 +546,13 @@ class TestDevNodeConcurrency:
     """Verify that asyncio.Semaphore properly limits concurrent agent calls."""
 
     @pytest.mark.asyncio
-    async def test_semaphore_limits_concurrency(self, tmp_path: Path) -> None:
+    async def test_semaphore_limits_concurrency(self, tmp_path: Path, dev_state, make_ui) -> None:
         """With max_concurrent_agents=2 and 4 independent tasks, at most 2 run at once."""
         tasks = [
             {"task_id": f"t{i}", "title": f"Task {i}", "dependencies": [], "description": f"desc {i}"} for i in range(4)
         ]
-        state = _make_state(tmp_path, dev_tasks=tasks, max_concurrent_agents=2)
-        ui = _make_ui()
+        state = dev_state(dev_tasks=tasks, max_concurrent_agents=2)
+        ui = make_ui()
 
         max_concurrent_seen = 0
         current_concurrent = 0
@@ -602,15 +579,15 @@ class TestDevNodeConcurrency:
         assert mock_agent.call_count == 4
 
     @pytest.mark.asyncio
-    async def test_default_concurrency_is_four(self, tmp_path: Path) -> None:
+    async def test_default_concurrency_is_four(self, tmp_path: Path, dev_state, make_ui) -> None:
         """When max_concurrent_agents is not set in state, default to 4."""
         tasks = [
             {"task_id": f"t{i}", "title": f"Task {i}", "dependencies": [], "description": f"desc {i}"} for i in range(6)
         ]
         # Explicitly omit max_concurrent_agents — it should default
-        state = _make_state(tmp_path, dev_tasks=tasks)
+        state = dev_state(dev_tasks=tasks)
         state.pop("max_concurrent_agents", None)
-        ui = _make_ui()
+        ui = make_ui()
 
         max_concurrent_seen = 0
         current_concurrent = 0
@@ -636,13 +613,13 @@ class TestDevNodeConcurrency:
         assert mock_agent.call_count == 6
 
     @pytest.mark.asyncio
-    async def test_semaphore_of_one_serializes_execution(self, tmp_path: Path) -> None:
+    async def test_semaphore_of_one_serializes_execution(self, tmp_path: Path, dev_state, make_ui) -> None:
         """With max_concurrent_agents=1, tasks run strictly one at a time."""
         tasks = [
             {"task_id": f"t{i}", "title": f"Task {i}", "dependencies": [], "description": f"d{i}"} for i in range(3)
         ]
-        state = _make_state(tmp_path, dev_tasks=tasks, max_concurrent_agents=1)
-        ui = _make_ui()
+        state = dev_state(dev_tasks=tasks, max_concurrent_agents=1)
+        ui = make_ui()
 
         max_concurrent_seen = 0
         current_concurrent = 0
@@ -677,7 +654,7 @@ class TestPromptConstruction:
     """Verify that the prompt assembled for the agent contains all required pieces."""
 
     @pytest.mark.asyncio
-    async def test_acceptance_criteria_in_prompt(self, tmp_path: Path) -> None:
+    async def test_acceptance_criteria_in_prompt(self, tmp_path: Path, dev_state, make_ui) -> None:
         """Each acceptance criterion should appear in the prompt as a bullet."""
         task = {
             "task_id": "ac_test",
@@ -686,8 +663,8 @@ class TestPromptConstruction:
             "dependencies": [],
             "acceptance_criteria": ["criterion alpha", "criterion beta"],
         }
-        state = _make_state(tmp_path, dev_tasks=[task])
-        ui = _make_ui()
+        state = dev_state(dev_tasks=[task])
+        ui = make_ui()
 
         mock_agent = AsyncMock(return_value=_make_agent_result())
 
@@ -699,7 +676,7 @@ class TestPromptConstruction:
         assert "- criterion beta" in prompt
 
     @pytest.mark.asyncio
-    async def test_directory_scope_in_prompt(self, tmp_path: Path) -> None:
+    async def test_directory_scope_in_prompt(self, tmp_path: Path, dev_state, make_ui) -> None:
         """Directory scope should appear in the prompt."""
         task = {
             "task_id": "scope_test",
@@ -708,8 +685,8 @@ class TestPromptConstruction:
             "directory_scope": "src/api/",
             "dependencies": [],
         }
-        state = _make_state(tmp_path, dev_tasks=[task])
-        ui = _make_ui()
+        state = dev_state(dev_tasks=[task])
+        ui = make_ui()
 
         mock_agent = AsyncMock(return_value=_make_agent_result())
 
@@ -720,11 +697,11 @@ class TestPromptConstruction:
         assert "src/api/" in prompt
 
     @pytest.mark.asyncio
-    async def test_missing_optional_fields_handled(self, tmp_path: Path) -> None:
+    async def test_missing_optional_fields_handled(self, tmp_path: Path, dev_state, make_ui) -> None:
         """Tasks missing description, directory_scope, or acceptance_criteria don't crash."""
         task = {"task_id": "minimal", "title": "Minimal", "dependencies": []}
-        state = _make_state(tmp_path, dev_tasks=[task])
-        ui = _make_ui()
+        state = dev_state(dev_tasks=[task])
+        ui = make_ui()
 
         mock_agent = AsyncMock(return_value=_make_agent_result())
 
@@ -735,10 +712,10 @@ class TestPromptConstruction:
         mock_agent.assert_called_once()
 
     @pytest.mark.asyncio
-    async def test_cwd_is_workspace_path(self, tmp_path: Path) -> None:
+    async def test_cwd_is_workspace_path(self, tmp_path: Path, dev_state, make_ui) -> None:
         """The agent cwd should be the workspace directory."""
-        state = _make_state(tmp_path)
-        ui = _make_ui()
+        state = dev_state()
+        ui = make_ui()
 
         mock_agent = AsyncMock(return_value=_make_agent_result())
 

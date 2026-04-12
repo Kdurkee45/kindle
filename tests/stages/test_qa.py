@@ -16,17 +16,11 @@ from kindle.stages.qa import (
     qa_node,
     qa_router,
 )
+from tests.constants import SAMPLE_FEATURE_SPEC
 
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
-
-SAMPLE_FEATURE_SPEC = {
-    "app_name": "TaskFlow",
-    "idea": "a task management app",
-    "core_features": ["task CRUD", "auth"],
-    "tech_constraints": ["React frontend"],
-}
 
 SAMPLE_ARCHITECTURE = """\
 # Architecture
@@ -80,35 +74,19 @@ Found "Lorem ipsum" in src/components/Hero.tsx:12
 """
 
 
-def _make_state(tmp_path: Path, **overrides) -> dict:
-    """Build a minimal KindleState dict pointing at *tmp_path* as project_dir."""
-    project_dir = tmp_path / "project"
-    (project_dir / "artifacts").mkdir(parents=True, exist_ok=True)
-    (project_dir / "logs").mkdir(parents=True, exist_ok=True)
-    # metadata.json needed by mark_stage_complete
-    meta = {"project_id": "kindle_test1234", "stages_completed": []}
-    (project_dir / "metadata.json").write_text(json.dumps(meta))
+@pytest.fixture
+def qa_state(make_state):
+    """Factory with qa-stage defaults pre-applied."""
 
-    state: dict = {
-        "project_dir": str(project_dir),
-        "idea": "a task management app",
-        "feature_spec": SAMPLE_FEATURE_SPEC,
-        "architecture": SAMPLE_ARCHITECTURE,
-    }
-    state.update(overrides)
-    return state
+    def _factory(**overrides):
+        defaults = {
+            "feature_spec": SAMPLE_FEATURE_SPEC,
+            "architecture": SAMPLE_ARCHITECTURE,
+        }
+        defaults.update(overrides)
+        return make_state(**defaults)
 
-
-def _make_ui() -> MagicMock:
-    """Return a mock UI with the methods qa_node actually calls."""
-    ui = MagicMock()
-    ui.auto_approve = False
-    ui.stage_start = MagicMock()
-    ui.stage_done = MagicMock()
-    ui.info = MagicMock()
-    ui.error = MagicMock()
-    ui.stage_log = MagicMock()
-    return ui
+    return _factory
 
 
 # ---------------------------------------------------------------------------
@@ -219,10 +197,10 @@ class TestVerdictDetection:
     """
 
     @pytest.mark.asyncio
-    async def test_verdict_pass_uppercase(self, tmp_path: Path) -> None:
+    async def test_verdict_pass_uppercase(self, tmp_path: Path, qa_state, make_ui) -> None:
         """'VERDICT: PASS' in report → qa_passed=True."""
-        state = _make_state(tmp_path)
-        ui = _make_ui()
+        state = qa_state()
+        ui = make_ui()
         ws = Path(state["project_dir"]) / "workspace"
 
         async def fake_run_agent(**kwargs):
@@ -239,10 +217,10 @@ class TestVerdictDetection:
         assert result["qa_passed"] is True
 
     @pytest.mark.asyncio
-    async def test_verdict_pass_lowercase(self, tmp_path: Path) -> None:
+    async def test_verdict_pass_lowercase(self, tmp_path: Path, qa_state, make_ui) -> None:
         """'verdict: pass' in report → qa_passed=True (case-insensitive path)."""
-        state = _make_state(tmp_path)
-        ui = _make_ui()
+        state = qa_state()
+        ui = make_ui()
         ws = Path(state["project_dir"]) / "workspace"
 
         async def fake_run_agent(**kwargs):
@@ -259,10 +237,10 @@ class TestVerdictDetection:
         assert result["qa_passed"] is True
 
     @pytest.mark.asyncio
-    async def test_verdict_pass_mixed_case(self, tmp_path: Path) -> None:
+    async def test_verdict_pass_mixed_case(self, tmp_path: Path, qa_state, make_ui) -> None:
         """'Verdict: Pass' in mixed case → qa_passed=True."""
-        state = _make_state(tmp_path)
-        ui = _make_ui()
+        state = qa_state()
+        ui = make_ui()
         ws = Path(state["project_dir"]) / "workspace"
 
         async def fake_run_agent(**kwargs):
@@ -279,10 +257,10 @@ class TestVerdictDetection:
         assert result["qa_passed"] is True
 
     @pytest.mark.asyncio
-    async def test_verdict_fail_detected(self, tmp_path: Path) -> None:
+    async def test_verdict_fail_detected(self, tmp_path: Path, qa_state, make_ui) -> None:
         """'Overall Verdict: FAIL' → qa_passed=False."""
-        state = _make_state(tmp_path)
-        ui = _make_ui()
+        state = qa_state()
+        ui = make_ui()
         ws = Path(state["project_dir"]) / "workspace"
 
         async def fake_run_agent(**kwargs):
@@ -297,10 +275,10 @@ class TestVerdictDetection:
         assert result["qa_passed"] is False
 
     @pytest.mark.asyncio
-    async def test_empty_report_means_fail(self, tmp_path: Path) -> None:
+    async def test_empty_report_means_fail(self, tmp_path: Path, qa_state, make_ui) -> None:
         """If qa_report.md is missing/empty → qa_passed=False."""
-        state = _make_state(tmp_path)
-        ui = _make_ui()
+        state = qa_state()
+        ui = make_ui()
         ws = Path(state["project_dir"]) / "workspace"
 
         async def fake_run_agent(**kwargs):
@@ -315,13 +293,13 @@ class TestVerdictDetection:
         assert result["qa_report"] == ""
 
     @pytest.mark.asyncio
-    async def test_pass_in_body_but_fail_in_verdict(self, tmp_path: Path) -> None:
+    async def test_pass_in_body_but_fail_in_verdict(self, tmp_path: Path, qa_state, make_ui) -> None:
         """Individual checks PASS, but overall verdict is FAIL → qa_passed=False.
 
         The verdict logic splits on 'VERDICT' and checks the text *after* it.
         """
-        state = _make_state(tmp_path)
-        ui = _make_ui()
+        state = qa_state()
+        ui = make_ui()
         ws = Path(state["project_dir"]) / "workspace"
 
         report = "## Linter: PASS\n## Formatter: PASS\n## Tests: FAIL\n\n## Overall Verdict: FAIL\n"
@@ -338,10 +316,10 @@ class TestVerdictDetection:
         assert result["qa_passed"] is False
 
     @pytest.mark.asyncio
-    async def test_verdict_with_bold_markdown(self, tmp_path: Path) -> None:
+    async def test_verdict_with_bold_markdown(self, tmp_path: Path, qa_state, make_ui) -> None:
         """'**Verdict**: PASS' (bold markdown) still detected."""
-        state = _make_state(tmp_path)
-        ui = _make_ui()
+        state = qa_state()
+        ui = make_ui()
         ws = Path(state["project_dir"]) / "workspace"
 
         async def fake_run_agent(**kwargs):
@@ -358,10 +336,10 @@ class TestVerdictDetection:
         assert result["qa_passed"] is True
 
     @pytest.mark.asyncio
-    async def test_no_verdict_keyword_all_pass_still_detected(self, tmp_path: Path) -> None:
+    async def test_no_verdict_keyword_all_pass_still_detected(self, tmp_path: Path, qa_state, make_ui) -> None:
         """Report with PASS but no VERDICT keyword — primary check sees PASS."""
-        state = _make_state(tmp_path)
-        ui = _make_ui()
+        state = qa_state()
+        ui = make_ui()
         ws = Path(state["project_dir"]) / "workspace"
 
         async def fake_run_agent(**kwargs):
@@ -430,7 +408,7 @@ class TestParseVerdict:
 class TestFindWorkspacePython:
     """Test Python interpreter discovery with mock filesystem."""
 
-    def test_finds_venv_python(self, tmp_path: Path) -> None:
+    def test_finds_venv_python(self, tmp_path: Path, qa_state, make_ui) -> None:
         """Prefer .venv/bin/python when it exists."""
         venv_bin = tmp_path / ".venv" / "bin"
         venv_bin.mkdir(parents=True)
@@ -439,7 +417,7 @@ class TestFindWorkspacePython:
         result = _find_workspace_python(tmp_path)
         assert result == str(venv_bin / "python")
 
-    def test_finds_venv_python3(self, tmp_path: Path) -> None:
+    def test_finds_venv_python3(self, tmp_path: Path, qa_state, make_ui) -> None:
         """Falls back to .venv/bin/python3 when python does not exist."""
         venv_bin = tmp_path / ".venv" / "bin"
         venv_bin.mkdir(parents=True)
@@ -448,7 +426,7 @@ class TestFindWorkspacePython:
         result = _find_workspace_python(tmp_path)
         assert result == str(venv_bin / "python3")
 
-    def test_finds_plain_venv_python(self, tmp_path: Path) -> None:
+    def test_finds_plain_venv_python(self, tmp_path: Path, qa_state, make_ui) -> None:
         """Falls back to venv/bin/python (no dot prefix)."""
         venv_bin = tmp_path / "venv" / "bin"
         venv_bin.mkdir(parents=True)
@@ -457,7 +435,7 @@ class TestFindWorkspacePython:
         result = _find_workspace_python(tmp_path)
         assert result == str(venv_bin / "python")
 
-    def test_finds_plain_venv_python3(self, tmp_path: Path) -> None:
+    def test_finds_plain_venv_python3(self, tmp_path: Path, qa_state, make_ui) -> None:
         """Falls back to venv/bin/python3 (no dot prefix)."""
         venv_bin = tmp_path / "venv" / "bin"
         venv_bin.mkdir(parents=True)
@@ -466,12 +444,12 @@ class TestFindWorkspacePython:
         result = _find_workspace_python(tmp_path)
         assert result == str(venv_bin / "python3")
 
-    def test_fallback_to_system_python3(self, tmp_path: Path) -> None:
+    def test_fallback_to_system_python3(self, tmp_path: Path, qa_state, make_ui) -> None:
         """When no venv found, falls back to 'python3'."""
         result = _find_workspace_python(tmp_path)
         assert result == "python3"
 
-    def test_priority_order_dot_venv_first(self, tmp_path: Path) -> None:
+    def test_priority_order_dot_venv_first(self, tmp_path: Path, qa_state, make_ui) -> None:
         """When both .venv and venv exist, .venv/bin/python wins."""
         for prefix in (".venv", "venv"):
             venv_bin = tmp_path / prefix / "bin"
@@ -482,7 +460,7 @@ class TestFindWorkspacePython:
         result = _find_workspace_python(tmp_path)
         assert result == str(tmp_path / ".venv" / "bin" / "python")
 
-    def test_dot_venv_python3_before_venv_python(self, tmp_path: Path) -> None:
+    def test_dot_venv_python3_before_venv_python(self, tmp_path: Path, qa_state, make_ui) -> None:
         """.venv/bin/python3 is preferred over venv/bin/python."""
         dot_venv_bin = tmp_path / ".venv" / "bin"
         dot_venv_bin.mkdir(parents=True)
@@ -505,10 +483,10 @@ class TestTechnicalQaPhase:
     """Tests for the Technical QA sub-stage of qa_node."""
 
     @pytest.mark.asyncio
-    async def test_run_agent_called_for_qa_technical(self, tmp_path: Path) -> None:
+    async def test_run_agent_called_for_qa_technical(self, tmp_path: Path, qa_state, make_ui) -> None:
         """run_agent is called with stage='qa_technical'."""
-        state = _make_state(tmp_path)
-        ui = _make_ui()
+        state = qa_state()
+        ui = make_ui()
         ws = Path(state["project_dir"]) / "workspace"
 
         calls = []
@@ -528,10 +506,10 @@ class TestTechnicalQaPhase:
         assert TECHNICAL_QA_SYSTEM_PROMPT in tech_calls[0]["system_prompt"]
 
     @pytest.mark.asyncio
-    async def test_qa_report_saved_as_artifact(self, tmp_path: Path) -> None:
+    async def test_qa_report_saved_as_artifact(self, tmp_path: Path, qa_state, make_ui) -> None:
         """qa_report.md content is persisted to artifacts/."""
-        state = _make_state(tmp_path)
-        ui = _make_ui()
+        state = qa_state()
+        ui = make_ui()
         ws = Path(state["project_dir"]) / "workspace"
 
         async def fake_run_agent(**kwargs):
@@ -551,10 +529,10 @@ class TestTechnicalQaPhase:
         assert artifact_path.read_text() == QA_REPORT_PASS
 
     @pytest.mark.asyncio
-    async def test_qa_report_contains_architecture_in_prompt(self, tmp_path: Path) -> None:
+    async def test_qa_report_contains_architecture_in_prompt(self, tmp_path: Path, qa_state, make_ui) -> None:
         """The tech QA prompt includes the architecture for context."""
-        state = _make_state(tmp_path)
-        ui = _make_ui()
+        state = qa_state()
+        ui = make_ui()
         ws = Path(state["project_dir"]) / "workspace"
 
         captured_prompt = None
@@ -573,10 +551,10 @@ class TestTechnicalQaPhase:
         assert SAMPLE_ARCHITECTURE in captured_prompt
 
     @pytest.mark.asyncio
-    async def test_workspace_python_logged(self, tmp_path: Path) -> None:
+    async def test_workspace_python_logged(self, tmp_path: Path, qa_state, make_ui) -> None:
         """The discovered Python interpreter is logged via ui.stage_log."""
-        state = _make_state(tmp_path)
-        ui = _make_ui()
+        state = qa_state()
+        ui = make_ui()
         ws = Path(state["project_dir"]) / "workspace"
 
         async def fake_run_agent(**kwargs):
@@ -603,10 +581,10 @@ class TestProductAuditPhase:
     """Tests for the Product Audit sub-stage of qa_node."""
 
     @pytest.mark.asyncio
-    async def test_product_audit_runs_when_qa_passes(self, tmp_path: Path) -> None:
+    async def test_product_audit_runs_when_qa_passes(self, tmp_path: Path, qa_state, make_ui) -> None:
         """Product audit agent is called only when QA passes."""
-        state = _make_state(tmp_path)
-        ui = _make_ui()
+        state = qa_state()
+        ui = make_ui()
         ws = Path(state["project_dir"]) / "workspace"
 
         stages_called = []
@@ -627,10 +605,10 @@ class TestProductAuditPhase:
         assert result["cpo_passed"] is True
 
     @pytest.mark.asyncio
-    async def test_product_audit_skipped_when_qa_fails(self, tmp_path: Path) -> None:
+    async def test_product_audit_skipped_when_qa_fails(self, tmp_path: Path, qa_state, make_ui) -> None:
         """When Technical QA fails, product audit is skipped entirely."""
-        state = _make_state(tmp_path)
-        ui = _make_ui()
+        state = qa_state()
+        ui = make_ui()
         ws = Path(state["project_dir"]) / "workspace"
 
         stages_called = []
@@ -650,10 +628,10 @@ class TestProductAuditPhase:
         assert result["product_audit"] == ""
 
     @pytest.mark.asyncio
-    async def test_product_audit_saved_as_artifact(self, tmp_path: Path) -> None:
+    async def test_product_audit_saved_as_artifact(self, tmp_path: Path, qa_state, make_ui) -> None:
         """product_audit.md is persisted to artifacts/."""
-        state = _make_state(tmp_path)
-        ui = _make_ui()
+        state = qa_state()
+        ui = make_ui()
         ws = Path(state["project_dir"]) / "workspace"
 
         async def fake_run_agent(**kwargs):
@@ -672,10 +650,10 @@ class TestProductAuditPhase:
         assert artifact_path.exists()
 
     @pytest.mark.asyncio
-    async def test_product_audit_fail_detected(self, tmp_path: Path) -> None:
+    async def test_product_audit_fail_detected(self, tmp_path: Path, qa_state, make_ui) -> None:
         """Product audit FAIL verdict → cpo_passed=False."""
-        state = _make_state(tmp_path)
-        ui = _make_ui()
+        state = qa_state()
+        ui = make_ui()
         ws = Path(state["project_dir"]) / "workspace"
 
         async def fake_run_agent(**kwargs):
@@ -693,10 +671,10 @@ class TestProductAuditPhase:
         assert result["cpo_passed"] is False
 
     @pytest.mark.asyncio
-    async def test_product_audit_empty_report_means_fail(self, tmp_path: Path) -> None:
+    async def test_product_audit_empty_report_means_fail(self, tmp_path: Path, qa_state, make_ui) -> None:
         """If product_audit.md is not written → cpo_passed=False."""
-        state = _make_state(tmp_path)
-        ui = _make_ui()
+        state = qa_state()
+        ui = make_ui()
         ws = Path(state["project_dir"]) / "workspace"
 
         async def fake_run_agent(**kwargs):
@@ -722,10 +700,10 @@ class TestSelfHealing:
     """When QA or CPO fails, a dev fix agent should be invoked."""
 
     @pytest.mark.asyncio
-    async def test_fix_agent_called_on_qa_failure(self, tmp_path: Path) -> None:
+    async def test_fix_agent_called_on_qa_failure(self, tmp_path: Path, qa_state, make_ui) -> None:
         """When Technical QA fails, a fix agent is dispatched."""
-        state = _make_state(tmp_path)
-        ui = _make_ui()
+        state = qa_state()
+        ui = make_ui()
         ws = Path(state["project_dir"]) / "workspace"
 
         stages_called = []
@@ -744,10 +722,10 @@ class TestSelfHealing:
         assert result["qa_retries"] == 1
 
     @pytest.mark.asyncio
-    async def test_fix_agent_called_on_cpo_failure(self, tmp_path: Path) -> None:
+    async def test_fix_agent_called_on_cpo_failure(self, tmp_path: Path, qa_state, make_ui) -> None:
         """When CPO audit fails (but QA passes), fix agent is dispatched."""
-        state = _make_state(tmp_path)
-        ui = _make_ui()
+        state = qa_state()
+        ui = make_ui()
         ws = Path(state["project_dir"]) / "workspace"
 
         stages_called = []
@@ -768,10 +746,10 @@ class TestSelfHealing:
         assert result["cpo_retries"] == 1
 
     @pytest.mark.asyncio
-    async def test_fix_agent_receives_qa_report_in_prompt(self, tmp_path: Path) -> None:
+    async def test_fix_agent_receives_qa_report_in_prompt(self, tmp_path: Path, qa_state, make_ui) -> None:
         """The fix agent gets the QA report in its prompt for context."""
-        state = _make_state(tmp_path)
-        ui = _make_ui()
+        state = qa_state()
+        ui = make_ui()
         ws = Path(state["project_dir"]) / "workspace"
 
         fix_prompt = None
@@ -793,10 +771,10 @@ class TestSelfHealing:
         assert "test_auth.py" in fix_prompt
 
     @pytest.mark.asyncio
-    async def test_fix_agent_uses_dev_fix_system_prompt(self, tmp_path: Path) -> None:
+    async def test_fix_agent_uses_dev_fix_system_prompt(self, tmp_path: Path, qa_state, make_ui) -> None:
         """The fix agent uses DEV_FIX_SYSTEM_PROMPT."""
-        state = _make_state(tmp_path)
-        ui = _make_ui()
+        state = qa_state()
+        ui = make_ui()
         ws = Path(state["project_dir"]) / "workspace"
 
         fix_system_prompt = None
@@ -816,10 +794,10 @@ class TestSelfHealing:
         assert fix_system_prompt == DEV_FIX_SYSTEM_PROMPT
 
     @pytest.mark.asyncio
-    async def test_no_fix_agent_when_both_pass(self, tmp_path: Path) -> None:
+    async def test_no_fix_agent_when_both_pass(self, tmp_path: Path, qa_state, make_ui) -> None:
         """When both QA and CPO pass, no fix agent is called."""
-        state = _make_state(tmp_path)
-        ui = _make_ui()
+        state = qa_state()
+        ui = make_ui()
         ws = Path(state["project_dir"]) / "workspace"
 
         stages_called = []
@@ -839,10 +817,10 @@ class TestSelfHealing:
         assert "qa_fix" not in stages_called
 
     @pytest.mark.asyncio
-    async def test_qa_retries_incremented_on_qa_failure(self, tmp_path: Path) -> None:
+    async def test_qa_retries_incremented_on_qa_failure(self, tmp_path: Path, qa_state, make_ui) -> None:
         """qa_retries is incremented by 1 on technical QA failure."""
-        state = _make_state(tmp_path, qa_retries=3)
-        ui = _make_ui()
+        state = qa_state(qa_retries=3)
+        ui = make_ui()
         ws = Path(state["project_dir"]) / "workspace"
 
         async def fake_run_agent(**kwargs):
@@ -857,10 +835,10 @@ class TestSelfHealing:
         assert result["qa_retries"] == 4
 
     @pytest.mark.asyncio
-    async def test_cpo_retries_incremented_on_cpo_failure(self, tmp_path: Path) -> None:
+    async def test_cpo_retries_incremented_on_cpo_failure(self, tmp_path: Path, qa_state, make_ui) -> None:
         """cpo_retries is incremented by 1 on product audit failure."""
-        state = _make_state(tmp_path, cpo_retries=2)
-        ui = _make_ui()
+        state = qa_state(cpo_retries=2)
+        ui = make_ui()
         ws = Path(state["project_dir"]) / "workspace"
 
         async def fake_run_agent(**kwargs):
@@ -886,10 +864,10 @@ class TestStateReturn:
     """Verify qa_node returns all expected state keys."""
 
     @pytest.mark.asyncio
-    async def test_all_state_keys_present_on_full_pass(self, tmp_path: Path) -> None:
+    async def test_all_state_keys_present_on_full_pass(self, tmp_path: Path, qa_state, make_ui) -> None:
         """All 7 state keys are present when both QA and CPO pass."""
-        state = _make_state(tmp_path)
-        ui = _make_ui()
+        state = qa_state()
+        ui = make_ui()
         ws = Path(state["project_dir"]) / "workspace"
 
         async def fake_run_agent(**kwargs):
@@ -915,10 +893,10 @@ class TestStateReturn:
         assert set(result.keys()) == expected_keys
 
     @pytest.mark.asyncio
-    async def test_current_stage_is_qa(self, tmp_path: Path) -> None:
+    async def test_current_stage_is_qa(self, tmp_path: Path, qa_state, make_ui) -> None:
         """current_stage is always 'qa' after qa_node."""
-        state = _make_state(tmp_path)
-        ui = _make_ui()
+        state = qa_state()
+        ui = make_ui()
         ws = Path(state["project_dir"]) / "workspace"
 
         async def fake_run_agent(**kwargs):
@@ -933,10 +911,10 @@ class TestStateReturn:
         assert result["current_stage"] == "qa"
 
     @pytest.mark.asyncio
-    async def test_state_keys_on_failure(self, tmp_path: Path) -> None:
+    async def test_state_keys_on_failure(self, tmp_path: Path, qa_state, make_ui) -> None:
         """All state keys are present even on failure path."""
-        state = _make_state(tmp_path)
-        ui = _make_ui()
+        state = qa_state()
+        ui = make_ui()
         ws = Path(state["project_dir"]) / "workspace"
 
         async def fake_run_agent(**kwargs):
@@ -957,10 +935,10 @@ class TestStateReturn:
         assert result["current_stage"] == "qa"
 
     @pytest.mark.asyncio
-    async def test_retries_preserved_from_state(self, tmp_path: Path) -> None:
+    async def test_retries_preserved_from_state(self, tmp_path: Path, qa_state, make_ui) -> None:
         """Retry counters carry forward from input state."""
-        state = _make_state(tmp_path, qa_retries=5, cpo_retries=3)
-        ui = _make_ui()
+        state = qa_state(qa_retries=5, cpo_retries=3)
+        ui = make_ui()
         ws = Path(state["project_dir"]) / "workspace"
 
         async def fake_run_agent(**kwargs):
@@ -988,10 +966,10 @@ class TestStageLifecycle:
     """Verify UI lifecycle calls and stage completion marking."""
 
     @pytest.mark.asyncio
-    async def test_stage_start_and_done_called(self, tmp_path: Path) -> None:
+    async def test_stage_start_and_done_called(self, tmp_path: Path, qa_state, make_ui) -> None:
         """ui.stage_start('qa') and ui.stage_done('qa') are always called."""
-        state = _make_state(tmp_path)
-        ui = _make_ui()
+        state = qa_state()
+        ui = make_ui()
         ws = Path(state["project_dir"]) / "workspace"
 
         async def fake_run_agent(**kwargs):
@@ -1007,10 +985,10 @@ class TestStageLifecycle:
         ui.stage_done.assert_called_once_with("qa")
 
     @pytest.mark.asyncio
-    async def test_stage_marked_complete_on_full_pass(self, tmp_path: Path) -> None:
+    async def test_stage_marked_complete_on_full_pass(self, tmp_path: Path, qa_state, make_ui) -> None:
         """mark_stage_complete is called when both QA and CPO pass."""
-        state = _make_state(tmp_path)
-        ui = _make_ui()
+        state = qa_state()
+        ui = make_ui()
         ws = Path(state["project_dir"]) / "workspace"
 
         async def fake_run_agent(**kwargs):
@@ -1030,10 +1008,10 @@ class TestStageLifecycle:
         assert "qa" in meta["stages_completed"]
 
     @pytest.mark.asyncio
-    async def test_stage_not_marked_complete_on_failure(self, tmp_path: Path) -> None:
+    async def test_stage_not_marked_complete_on_failure(self, tmp_path: Path, qa_state, make_ui) -> None:
         """mark_stage_complete is NOT called when QA fails."""
-        state = _make_state(tmp_path)
-        ui = _make_ui()
+        state = qa_state()
+        ui = make_ui()
         ws = Path(state["project_dir"]) / "workspace"
 
         async def fake_run_agent(**kwargs):
@@ -1050,10 +1028,10 @@ class TestStageLifecycle:
         assert "qa" not in meta["stages_completed"]
 
     @pytest.mark.asyncio
-    async def test_model_passed_through_to_agent(self, tmp_path: Path) -> None:
+    async def test_model_passed_through_to_agent(self, tmp_path: Path, qa_state, make_ui) -> None:
         """The model preference is forwarded to run_agent."""
-        state = _make_state(tmp_path, model="claude-sonnet-4-20250514")
-        ui = _make_ui()
+        state = qa_state(model="claude-sonnet-4-20250514")
+        ui = make_ui()
         ws = Path(state["project_dir"]) / "workspace"
 
         captured_models = []
@@ -1071,10 +1049,10 @@ class TestStageLifecycle:
         assert all(m == "claude-sonnet-4-20250514" for m in captured_models)
 
     @pytest.mark.asyncio
-    async def test_max_agent_turns_forwarded(self, tmp_path: Path) -> None:
+    async def test_max_agent_turns_forwarded(self, tmp_path: Path, qa_state, make_ui) -> None:
         """max_agent_turns from state is forwarded to run_agent."""
-        state = _make_state(tmp_path, max_agent_turns=25)
-        ui = _make_ui()
+        state = qa_state(max_agent_turns=25)
+        ui = make_ui()
         ws = Path(state["project_dir"]) / "workspace"
 
         captured_turns = []
