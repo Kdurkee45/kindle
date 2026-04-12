@@ -9,7 +9,8 @@ from __future__ import annotations
 import json
 
 from kindle.agent import run_agent
-from kindle.artifacts import mark_stage_complete, save_artifact, workspace_path
+from kindle.artifacts import mark_stage_complete, save_artifact
+from kindle.stages._helpers import stage_setup
 from kindle.state import KindleState
 from kindle.ui import UI
 
@@ -85,13 +86,11 @@ Write both files to the working directory.
 
 async def architect_node(state: KindleState, ui: UI) -> dict:
     """LangGraph node: design architecture and create dev tasks."""
-    ui.stage_start("architect")
-    project_dir = state["project_dir"]
+    project_dir, ws = stage_setup(state, ui, "architect")
     feature_spec = state.get("feature_spec", {})
     research_report = state.get("research_report", "")
     idea = state.get("idea", "")
     stack_pref = state.get("stack_preference", "")
-    ws = workspace_path(project_dir)
 
     prompt_parts = [
         "Design the architecture and create dev tasks for this application.",
@@ -144,8 +143,7 @@ async def architect_node(state: KindleState, ui: UI) -> dict:
 
     # Optional human review of architecture before building
     if state.get("review_arch") and not state.get("auto_approve"):
-        ui.show_artifact("Architecture", architecture)
-        approved, feedback = ui.prompt_arch_review()
+        approved, feedback = ui.prompt_arch_review(architecture)
         if not approved:
             ui.info(f"Architecture feedback: {feedback}")
             ui.info("Architecture revision not yet implemented — proceeding with current design.")

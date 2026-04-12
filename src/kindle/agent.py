@@ -59,6 +59,9 @@ async def run_agent(
         cwd=cwd,
         max_turns=max_turns,
         allowed_tools=allowed_tools,
+        # Security: bypass permission prompts because agents must freely create/modify
+        # project files. The trust boundary is the project workspace directory (cwd),
+        # and the user explicitly invokes kindle to generate code. See audit finding M2.
         permission_mode="bypassPermissions",
     )
     if model:

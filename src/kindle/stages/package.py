@@ -9,7 +9,8 @@ from __future__ import annotations
 import json
 
 from kindle.agent import run_agent
-from kindle.artifacts import mark_project_done, mark_stage_complete, save_artifact, workspace_path
+from kindle.artifacts import mark_project_done, mark_stage_complete, save_artifact
+from kindle.stages._helpers import stage_setup
 from kindle.state import KindleState
 from kindle.ui import UI
 
@@ -66,13 +67,11 @@ ready to `git clone` and run with the README instructions.
 
 async def package_node(state: KindleState, ui: UI) -> dict:
     """LangGraph node: package the project for delivery."""
-    ui.stage_start("package")
-    project_dir = state["project_dir"]
+    project_dir, ws = stage_setup(state, ui, "package")
     feature_spec = state.get("feature_spec", {})
     architecture = state.get("architecture", "")
     dev_tasks = state.get("dev_tasks", [])
     idea = state.get("idea", "")
-    ws = workspace_path(project_dir)
 
     prompt_parts = [
         "Package this project for delivery.",
@@ -84,7 +83,7 @@ async def package_node(state: KindleState, ui: UI) -> dict:
         "atomic commits per dev task, and optionally add a Dockerfile.",
     ]
 
-    result = await run_agent(
+    await run_agent(
         persona="Principal DevOps Engineer",
         system_prompt=SYSTEM_PROMPT,
         user_prompt="\n".join(prompt_parts),

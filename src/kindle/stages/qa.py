@@ -10,9 +10,11 @@ If either fails, loops back to Dev for fixes (up to max retries).
 from __future__ import annotations
 
 import json
+from pathlib import Path
 
 from kindle.agent import run_agent
-from kindle.artifacts import mark_stage_complete, save_artifact, workspace_path
+from kindle.artifacts import mark_stage_complete, save_artifact
+from kindle.stages._helpers import stage_setup
 from kindle.state import KindleState
 from kindle.ui import UI
 
@@ -106,13 +108,23 @@ def _find_workspace_python(ws: Path) -> str:
     return "python3"
 
 
+def _parse_verdict(report: str) -> bool:
+    """Parse a QA/audit report and return True if the overall verdict is PASS."""
+    if not report:
+        return False
+    passed = "PASS" in report.upper() and "FAIL" not in report.upper().split("VERDICT")[-1]
+    if not passed and "verdict" in report.lower():
+        for line in report.lower().split("\n"):
+            if "verdict" in line and "pass" in line:
+                return True
+    return passed
+
+
 async def qa_node(state: KindleState, ui: UI) -> dict:
     """LangGraph node: run Technical QA + Product Audit."""
-    ui.stage_start("qa")
-    project_dir = state["project_dir"]
+    project_dir, ws = stage_setup(state, ui, "qa")
     feature_spec = state.get("feature_spec", {})
     architecture = state.get("architecture", "")
-    ws = workspace_path(project_dir)
     qa_retries = state.get("qa_retries", 0)
     cpo_retries = state.get("cpo_retries", 0)
 
@@ -147,15 +159,7 @@ async def qa_node(state: KindleState, ui: UI) -> dict:
     qa_report = qa_report_path.read_text() if qa_report_path.exists() else ""
     save_artifact(project_dir, "qa_report.md", qa_report)
 
-    qa_passed = (
-        "PASS" in qa_report.upper() and "FAIL" not in qa_report.upper().split("VERDICT")[-1] if qa_report else False
-    )
-    if not qa_passed and "verdict" in qa_report.lower():
-        # More nuanced check — look for "verdict: pass" pattern
-        for line in qa_report.lower().split("\n"):
-            if "verdict" in line and "pass" in line:
-                qa_passed = True
-                break
+    qa_passed = _parse_verdict(qa_report)
 
     if not qa_passed:
         ui.info(f"Technical QA FAILED (attempt {qa_retries + 1})")
@@ -191,16 +195,7 @@ async def qa_node(state: KindleState, ui: UI) -> dict:
         product_audit = audit_path.read_text() if audit_path.exists() else ""
         save_artifact(project_dir, "product_audit.md", product_audit)
 
-        cpo_passed = (
-            "PASS" in product_audit.upper() and "FAIL" not in product_audit.upper().split("VERDICT")[-1]
-            if product_audit
-            else False
-        )
-        if not cpo_passed and "verdict" in product_audit.lower():
-            for line in product_audit.lower().split("\n"):
-                if "verdict" in line and "pass" in line:
-                    cpo_passed = True
-                    break
+        cpo_passed = _parse_verdict(product_audit)
 
         if not cpo_passed:
             ui.info(f"Product Audit FAILED (attempt {cpo_retries + 1})")

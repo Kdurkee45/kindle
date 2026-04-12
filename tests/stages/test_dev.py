@@ -203,7 +203,7 @@ class TestTopologicalSort:
         """One root task with many dependents fans out to two layers."""
         root = {"task_id": "root", "dependencies": []}
         children = [{"task_id": f"child_{i}", "dependencies": ["root"]} for i in range(10)]
-        layers = _topological_sort([root] + children)
+        layers = _topological_sort([root, *children])
         assert len(layers) == 2
         assert layers[0][0]["task_id"] == "root"
         assert len(layers[1]) == 10

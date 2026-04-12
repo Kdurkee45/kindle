@@ -11,6 +11,25 @@ import pytest
 from kindle.config import Settings, _find_env_file
 
 # ---------------------------------------------------------------------------
+# Shared fixtures for patching config helpers
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture
+def _patch_find_env_file():
+    """Patch ``_find_env_file`` to return *None* (no .env discovered)."""
+    with patch("kindle.config._find_env_file", return_value=None):
+        yield
+
+
+@pytest.fixture
+def _patch_load_dotenv():
+    """Patch ``load_dotenv`` so it becomes a no-op."""
+    with patch("kindle.config.load_dotenv"):
+        yield
+
+
+# ---------------------------------------------------------------------------
 # _find_env_file
 # ---------------------------------------------------------------------------
 
@@ -103,9 +122,8 @@ class TestFindEnvFile:
 class TestSettingsLoad:
     """Tests for Settings.load() with valid environment configurations."""
 
-    @patch("kindle.config.load_dotenv")
-    @patch("kindle.config._find_env_file", return_value=None)
-    def test_load_with_only_api_key_uses_defaults(self, _mock_find: MagicMock, _mock_dotenv: MagicMock) -> None:
+    @pytest.mark.usefixtures("_patch_find_env_file", "_patch_load_dotenv")
+    def test_load_with_only_api_key_uses_defaults(self) -> None:
         env = {"ANTHROPIC_API_KEY": "sk-test-key-123"}
         with patch.dict("os.environ", env, clear=True):
             settings = Settings.load()
@@ -116,9 +134,8 @@ class TestSettingsLoad:
         assert settings.max_qa_retries == 10
         assert settings.max_cpo_retries == 10
 
-    @patch("kindle.config.load_dotenv")
-    @patch("kindle.config._find_env_file", return_value=None)
-    def test_load_with_all_env_vars_set(self, _mock_find: MagicMock, _mock_dotenv: MagicMock) -> None:
+    @pytest.mark.usefixtures("_patch_find_env_file", "_patch_load_dotenv")
+    def test_load_with_all_env_vars_set(self) -> None:
         env = {
             "ANTHROPIC_API_KEY": "sk-custom-key",
             "KINDLE_MODEL": "claude-sonnet-4-20250514",
@@ -136,9 +153,8 @@ class TestSettingsLoad:
         assert settings.max_qa_retries == 5
         assert settings.max_cpo_retries == 3
 
-    @patch("kindle.config.load_dotenv")
-    @patch("kindle.config._find_env_file", return_value=None)
-    def test_load_partial_overrides(self, _mock_find: MagicMock, _mock_dotenv: MagicMock) -> None:
+    @pytest.mark.usefixtures("_patch_find_env_file", "_patch_load_dotenv")
+    def test_load_partial_overrides(self) -> None:
         """Only some optional vars set; rest use defaults."""
         env = {
             "ANTHROPIC_API_KEY": "sk-key",
@@ -161,9 +177,9 @@ class TestSettingsLoad:
             Settings.load()
         mock_dotenv.assert_called_once_with(env_path)
 
+    @pytest.mark.usefixtures("_patch_find_env_file")
     @patch("kindle.config.load_dotenv")
-    @patch("kindle.config._find_env_file", return_value=None)
-    def test_load_skips_load_dotenv_when_no_env_file(self, _mock_find: MagicMock, mock_dotenv: MagicMock) -> None:
+    def test_load_skips_load_dotenv_when_no_env_file(self, mock_dotenv: MagicMock) -> None:
         with patch.dict("os.environ", {"ANTHROPIC_API_KEY": "sk-key"}, clear=True):
             Settings.load()
         mock_dotenv.assert_not_called()
@@ -177,16 +193,14 @@ class TestSettingsLoad:
 class TestSettingsLoadErrors:
     """Tests for Settings.load() when required env vars are missing."""
 
-    @patch("kindle.config.load_dotenv")
-    @patch("kindle.config._find_env_file", return_value=None)
-    def test_missing_api_key_raises_system_exit(self, _mock_find: MagicMock, _mock_dotenv: MagicMock) -> None:
+    @pytest.mark.usefixtures("_patch_find_env_file", "_patch_load_dotenv")
+    def test_missing_api_key_raises_system_exit(self) -> None:
         with patch.dict("os.environ", {}, clear=True), pytest.raises(SystemExit) as exc_info:
             Settings.load()
         assert "ANTHROPIC_API_KEY" in str(exc_info.value)
 
-    @patch("kindle.config.load_dotenv")
-    @patch("kindle.config._find_env_file", return_value=None)
-    def test_empty_api_key_raises_system_exit(self, _mock_find: MagicMock, _mock_dotenv: MagicMock) -> None:
+    @pytest.mark.usefixtures("_patch_find_env_file", "_patch_load_dotenv")
+    def test_empty_api_key_raises_system_exit(self) -> None:
         with (
             patch.dict("os.environ", {"ANTHROPIC_API_KEY": ""}, clear=True),
             pytest.raises(SystemExit) as exc_info,
@@ -194,9 +208,8 @@ class TestSettingsLoadErrors:
             Settings.load()
         assert "ANTHROPIC_API_KEY" in str(exc_info.value)
 
-    @patch("kindle.config.load_dotenv")
-    @patch("kindle.config._find_env_file", return_value=None)
-    def test_system_exit_message_is_helpful(self, _mock_find: MagicMock, _mock_dotenv: MagicMock) -> None:
+    @pytest.mark.usefixtures("_patch_find_env_file", "_patch_load_dotenv")
+    def test_system_exit_message_is_helpful(self) -> None:
         with patch.dict("os.environ", {}, clear=True), pytest.raises(SystemExit) as exc_info:
             Settings.load()
         msg = str(exc_info.value)

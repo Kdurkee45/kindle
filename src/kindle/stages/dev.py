@@ -11,6 +11,7 @@ import json
 
 from kindle.agent import run_agent
 from kindle.artifacts import mark_stage_complete, save_artifact, workspace_path
+from kindle.stages._helpers import stage_setup
 from kindle.state import KindleState
 from kindle.ui import UI
 
@@ -99,7 +100,6 @@ async def _run_task(
 
 def _topological_sort(tasks: list[dict]) -> list[list[dict]]:
     """Sort tasks into layers by dependencies. Tasks in the same layer can run in parallel."""
-    task_map = {t.get("task_id", f"task_{i:02d}"): t for i, t in enumerate(tasks)}
     completed: set[str] = set()
     layers: list[list[dict]] = []
 
@@ -130,8 +130,7 @@ def _topological_sort(tasks: list[dict]) -> list[list[dict]]:
 
 async def dev_node(state: KindleState, ui: UI) -> dict:
     """LangGraph node: build all dev tasks in parallel with dependency ordering."""
-    ui.stage_start("dev")
-    project_dir = state["project_dir"]
+    project_dir, _ws = stage_setup(state, ui, "dev")
     dev_tasks = state.get("dev_tasks", [])
     max_concurrent = state.get("max_concurrent_agents", 4)
 
@@ -158,7 +157,7 @@ async def dev_node(state: KindleState, ui: UI) -> dict:
 
         results = await asyncio.gather(*coros, return_exceptions=True)
         for r in results:
-            if isinstance(r, Exception):
+            if isinstance(r, BaseException):
                 ui.error(f"Dev task failed: {r}")
                 all_results.append({"status": "failed", "error": str(r)})
             else:

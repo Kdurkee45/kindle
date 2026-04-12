@@ -374,12 +374,11 @@ class TestArchitectureReviewGate:
         with patch("kindle.stages.architect.run_agent", mock_agent):
             await architect_node(state, ui)
 
-        ui.show_artifact.assert_called_once_with("Architecture", SAMPLE_ARCHITECTURE)
-        ui.prompt_arch_review.assert_called_once()
+        ui.prompt_arch_review.assert_called_once_with(SAMPLE_ARCHITECTURE)
 
     @pytest.mark.asyncio
     async def test_review_gate_shows_architecture_content(self, tmp_path: Path) -> None:
-        """show_artifact is called with the actual architecture content."""
+        """prompt_arch_review receives the actual architecture content."""
         custom_arch = "# Custom Architecture\nSpecial design."
         state = _make_state(tmp_path, review_arch=True, auto_approve=False)
         ui = _make_ui()
@@ -394,7 +393,7 @@ class TestArchitectureReviewGate:
         with patch("kindle.stages.architect.run_agent", mock_agent):
             await architect_node(state, ui)
 
-        ui.show_artifact.assert_called_once_with("Architecture", custom_arch)
+        ui.prompt_arch_review.assert_called_once_with(custom_arch)
 
     @pytest.mark.asyncio
     async def test_review_gate_skipped_when_review_arch_false(self, tmp_path: Path) -> None:

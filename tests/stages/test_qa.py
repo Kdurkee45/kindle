@@ -12,6 +12,7 @@ from kindle.stages.qa import (
     DEV_FIX_SYSTEM_PROMPT,
     TECHNICAL_QA_SYSTEM_PROMPT,
     _find_workspace_python,
+    _parse_verdict,
     qa_node,
     qa_router,
 )
@@ -379,6 +380,46 @@ class TestVerdictDetection:
         # (when there is no VERDICT, split returns the whole string, but
         # there is no FAIL in it → qa_passed = True)
         assert result["qa_passed"] is True
+
+
+# ---------------------------------------------------------------------------
+# _parse_verdict — direct unit tests for the verdict parsing helper
+# ---------------------------------------------------------------------------
+
+
+class TestParseVerdict:
+    """Direct unit tests for _parse_verdict covering all branches."""
+
+    @pytest.mark.parametrize(
+        ("report", "expected"),
+        [
+            pytest.param("", False, id="empty_string"),
+            pytest.param("All checks: PASS\n\nOverall Verdict: PASS\n", True, id="uppercase_pass"),
+            pytest.param("## Tests: FAIL\n\n## Overall Verdict: FAIL\n", False, id="uppercase_fail"),
+            pytest.param(
+                "Overall Verdict: Pass\nSome FAIL note at the end",
+                True,
+                id="line_level_verdict_pass_overrides_trailing_fail",
+            ),
+            pytest.param(
+                "Section PASS ok\nVerdict: Pass\nFAIL residue",
+                True,
+                id="verdict_pass_line_with_fail_elsewhere",
+            ),
+            pytest.param(
+                "No verdict keyword, just FAIL",
+                False,
+                id="fail_without_verdict_keyword",
+            ),
+            pytest.param(
+                "Result: PASS\nNo issues found.",
+                True,
+                id="pass_without_verdict_keyword",
+            ),
+        ],
+    )
+    def test_parse_verdict(self, report: str, expected: bool) -> None:
+        assert _parse_verdict(report) is expected
 
 
 # ---------------------------------------------------------------------------
