@@ -34,7 +34,7 @@ dev = [
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = ["src"]
-addopts = "-v --tb=short --cov=kindle --cov-report=term-missing"
+addopts = "-v --tb=short --cov=kindle --cov-report=term-missing --cov-fail-under=80"
 asyncio_mode = "auto"
 
 [tool.ruff]

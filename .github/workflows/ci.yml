@@ -38,7 +38,7 @@ jobs:
         run: uv run mypy src/kindle/
 
       - name: Test with coverage (pytest)
-        run: uv run pytest --cov=kindle --cov-report=xml --cov-fail-under=65
+        run: uv run pytest --cov=kindle --cov-report=xml --cov-fail-under=80
 
       - name: Upload coverage report
         if: always()
