@@ -28,7 +28,6 @@ dev = [
     "pytest>=8.0.0",
     "pytest-cov>=6.0.0",
     "pytest-asyncio>=0.24",
-    "types-rich>=13.0.0",
 ]
 
 [tool.pytest.ini_options]
@@ -65,5 +64,5 @@ warn_redundant_casts = true
 warn_unused_ignores = true
 
 [[tool.mypy.overrides]]
-module = ["claude_agent_sdk.*", "langgraph.*", "langchain_core.*", "dotenv.*", "typer.*"]
+module = ["claude_agent_sdk.*", "langgraph.*", "langchain_core.*"]
 ignore_missing_imports = true
