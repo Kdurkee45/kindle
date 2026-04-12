@@ -7,6 +7,7 @@ patterns, prior art, and potential pitfalls. Pure research — no opinions.
 from __future__ import annotations
 
 import json
+
 from kindle.agent import run_agent
 from kindle.artifacts import mark_stage_complete, save_artifact, workspace_path
 from kindle.state import KindleState
@@ -66,7 +67,7 @@ async def research_node(state: KindleState, ui: UI) -> dict:
     ws = workspace_path(project_dir)
 
     prompt_parts = [
-        f"Research the technology landscape for building this application.",
+        "Research the technology landscape for building this application.",
         f"\nIDEA: {idea}",
         f"\nFEATURE SPEC:\n{json.dumps(feature_spec, indent=2)}",
     ]

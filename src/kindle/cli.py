@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import asyncio
 import json
-import shutil
 from pathlib import Path
 
 import typer
@@ -28,7 +27,9 @@ def build(
     idea: str = typer.Argument(None, help="Describe the application you want to build"),
     stack: str = typer.Option("", "--stack", "-s", help="Tech stack preference (e.g. react, fastapi, nextjs)"),
     auto_approve: bool = typer.Option(False, "--auto-approve", help="Auto-answer all Grill questions with defaults"),
-    concurrency: int = typer.Option(0, "--concurrency", "-c", help="Max concurrent dev agents (0 = use config default)"),
+    concurrency: int = typer.Option(
+        0, "--concurrency", "-c", help="Max concurrent dev agents (0 = use config default)"
+    ),
     review_arch: bool = typer.Option(False, "--review-arch", help="Pause for human review of architecture"),
     output: str = typer.Option("", "--output", "-o", help="Output directory for the built project"),
     qa_retries: int = typer.Option(0, "--qa-retries", help="Max QA self-healing retries (0 = use config default)"),

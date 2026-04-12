@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+
 from kindle.agent import run_agent
 from kindle.artifacts import mark_stage_complete, save_artifact, workspace_path
 from kindle.state import KindleState
@@ -61,14 +62,12 @@ async def _run_task(
         architecture = state.get("architecture", "")
 
         prompt_parts = [
-            f"Build this dev task for the application.\n",
+            "Build this dev task for the application.\n",
             f"TASK ID: {task_id}",
             f"TASK TITLE: {title}",
             f"TASK DESCRIPTION:\n{task.get('description', '')}",
             f"\nDIRECTORY SCOPE: {task.get('directory_scope', '.')}",
-            f"\nACCEPTANCE CRITERIA:\n" + "\n".join(
-                f"  - {c}" for c in task.get("acceptance_criteria", [])
-            ),
+            "\nACCEPTANCE CRITERIA:\n" + "\n".join(f"  - {c}" for c in task.get("acceptance_criteria", [])),
             f"\nFEATURE SPEC:\n{json.dumps(feature_spec, indent=2)}",
             f"\nARCHITECTURE:\n{architecture}",
             f"\nWrite all code and tests to the working directory. "
@@ -155,9 +154,7 @@ async def dev_node(state: KindleState, ui: UI) -> dict:
         coros = []
         for task in layer:
             task_counter += 1
-            coros.append(
-                _run_task(task, state, ui, semaphore, task_counter, total)
-            )
+            coros.append(_run_task(task, state, ui, semaphore, task_counter, total))
 
         results = await asyncio.gather(*coros, return_exceptions=True)
         for r in results:

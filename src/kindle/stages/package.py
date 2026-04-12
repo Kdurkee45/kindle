@@ -7,8 +7,9 @@ commits per dev task, and optionally creates a Dockerfile.
 from __future__ import annotations
 
 import json
+
 from kindle.agent import run_agent
-from kindle.artifacts import mark_stage_complete, mark_project_done, save_artifact, workspace_path
+from kindle.artifacts import mark_project_done, mark_stage_complete, save_artifact, workspace_path
 from kindle.state import KindleState
 from kindle.ui import UI
 
@@ -74,13 +75,13 @@ async def package_node(state: KindleState, ui: UI) -> dict:
     ws = workspace_path(project_dir)
 
     prompt_parts = [
-        f"Package this project for delivery.",
+        "Package this project for delivery.",
         f"\nIDEA: {idea}",
         f"\nFEATURE SPEC:\n{json.dumps(feature_spec, indent=2)}",
         f"\nARCHITECTURE:\n{architecture}",
         f"\nDEV TASKS:\n{json.dumps(dev_tasks, indent=2)}",
-        f"\nEnsure the project runs, generate README.md, initialize git with "
-        f"atomic commits per dev task, and optionally add a Dockerfile.",
+        "\nEnsure the project runs, generate README.md, initialize git with "
+        "atomic commits per dev task, and optionally add a Dockerfile.",
     ]
 
     result = await run_agent(

@@ -92,16 +92,12 @@ class UI:
         )
         self._safe_print()
 
-    def grill_question(
-        self, question: str, recommended: str, category: str, number: int
-    ) -> str:
+    def grill_question(self, question: str, recommended: str, category: str, number: int) -> str:
         """Present a Grill question and return the human's answer."""
         self._safe_print()
         self._safe_print(
             Panel(
-                f"[bold]{question}[/bold]\n\n"
-                f"[dim]Category: {category}[/dim]\n"
-                f"[cyan]Recommended:[/cyan] {recommended}",
+                f"[bold]{question}[/bold]\n\n[dim]Category: {category}[/dim]\n[cyan]Recommended:[/cyan] {recommended}",
                 title=f"[bold magenta]Question {number}[/bold magenta]",
                 border_style="magenta",
                 box=box.ROUNDED,

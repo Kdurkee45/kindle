@@ -7,6 +7,7 @@ the architecture and creates non-overlapping dev tasks for parallel execution.
 from __future__ import annotations
 
 import json
+
 from kindle.agent import run_agent
 from kindle.artifacts import mark_stage_complete, save_artifact, workspace_path
 from kindle.state import KindleState
@@ -93,16 +94,14 @@ async def architect_node(state: KindleState, ui: UI) -> dict:
     ws = workspace_path(project_dir)
 
     prompt_parts = [
-        f"Design the architecture and create dev tasks for this application.",
+        "Design the architecture and create dev tasks for this application.",
         f"\nIDEA: {idea}",
         f"\nFEATURE SPEC:\n{json.dumps(feature_spec, indent=2)}",
         f"\nRESEARCH REPORT:\n{research_report}",
     ]
     if stack_pref:
         prompt_parts.append(f"\nSTACK PREFERENCE: {stack_pref}")
-    prompt_parts.append(
-        "\nWrite architecture.md and dev_tasks.json to the working directory."
-    )
+    prompt_parts.append("\nWrite architecture.md and dev_tasks.json to the working directory.")
 
     result = await run_agent(
         persona="Principal Solution Architect",
