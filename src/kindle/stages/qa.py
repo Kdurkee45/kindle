@@ -120,21 +120,15 @@ def _parse_verdict(report: str) -> bool:
     return passed
 
 
-async def _run_qa_validation(
-    state: KindleState,
-    ws: Path,
-    ui: UI,
-    project_dir: Path,
-) -> tuple[str, bool]:
-    """Run Technical QA sub-stage: tests, lint, format, type-check.
-
-    Returns:
-        A ``(qa_report, passed)`` tuple where *qa_report* is the raw report
-        text and *passed* indicates whether the overall verdict was PASS.
-    """
+async def qa_node(state: KindleState, ui: UI) -> dict:
+    """LangGraph node: run Technical QA + Product Audit."""
+    project_dir, ws = stage_setup(state, ui, "qa")
     feature_spec = state.get("feature_spec", {})
     architecture = state.get("architecture", "")
+    qa_retries = state.get("qa_retries", 0)
+    cpo_retries = state.get("cpo_retries", 0)
 
+    # ── 5A: Technical QA ──────────────────────────────────────────
     ui.info("Running Technical QA...")
     workspace_python = _find_workspace_python(ws)
     ui.stage_log("qa", f"Using Python: {workspace_python}")
@@ -160,6 +154,7 @@ async def _run_qa_validation(
         max_turns=state.get("max_agent_turns", 50),
     )
 
+    # Read QA report
     qa_report_path = ws / "qa_report.md"
     qa_report = qa_report_path.read_text() if qa_report_path.exists() else ""
     save_artifact(project_dir, "qa_report.md", qa_report)
@@ -167,81 +162,47 @@ async def _run_qa_validation(
     qa_passed = _parse_verdict(qa_report)
 
     if not qa_passed:
-        qa_retries = state.get("qa_retries", 0)
         ui.info(f"Technical QA FAILED (attempt {qa_retries + 1})")
     else:
         ui.info("Technical QA PASSED ✓")
 
-    return qa_report, qa_passed
+    # ── 5B: Product Audit ─────────────────────────────────────────
+    cpo_passed = False
+    product_audit = ""
 
+    if qa_passed:
+        ui.info("Running Product Audit (anti-slop detection)...")
+        audit_prompt = (
+            f"Perform a product audit on the project in the working directory.\n\n"
+            f"FEATURE SPEC:\n{json.dumps(feature_spec, indent=2)}\n\n"
+            f"Read every source file. Check for slop, placeholders, spec compliance. "
+            f"Write product_audit.md to the working directory."
+        )
 
-async def _run_product_audit(
-    state: KindleState,
-    ws: Path,
-    ui: UI,
-    project_dir: Path,
-) -> tuple[str, bool]:
-    """Run Product Audit sub-stage: anti-slop detection and spec compliance.
+        await run_agent(
+            persona="VP of Product (Anti-Slop Auditor)",
+            system_prompt=PRODUCT_AUDIT_SYSTEM_PROMPT,
+            user_prompt=audit_prompt,
+            cwd=str(ws),
+            project_dir=project_dir,
+            stage="qa_product_audit",
+            ui=ui,
+            model=state.get("model"),
+            max_turns=state.get("max_agent_turns", 50),
+        )
 
-    Returns:
-        A ``(product_audit, passed)`` tuple where *product_audit* is the raw
-        audit text and *passed* indicates whether the verdict was PASS.
-    """
-    feature_spec = state.get("feature_spec", {})
+        audit_path = ws / "product_audit.md"
+        product_audit = audit_path.read_text() if audit_path.exists() else ""
+        save_artifact(project_dir, "product_audit.md", product_audit)
 
-    ui.info("Running Product Audit (anti-slop detection)...")
-    audit_prompt = (
-        f"Perform a product audit on the project in the working directory.\n\n"
-        f"FEATURE SPEC:\n{json.dumps(feature_spec, indent=2)}\n\n"
-        f"Read every source file. Check for slop, placeholders, spec compliance. "
-        f"Write product_audit.md to the working directory."
-    )
+        cpo_passed = _parse_verdict(product_audit)
 
-    await run_agent(
-        persona="VP of Product (Anti-Slop Auditor)",
-        system_prompt=PRODUCT_AUDIT_SYSTEM_PROMPT,
-        user_prompt=audit_prompt,
-        cwd=str(ws),
-        project_dir=project_dir,
-        stage="qa_product_audit",
-        ui=ui,
-        model=state.get("model"),
-        max_turns=state.get("max_agent_turns", 50),
-    )
+        if not cpo_passed:
+            ui.info(f"Product Audit FAILED (attempt {cpo_retries + 1})")
+        else:
+            ui.info("Product Audit PASSED ✓")
 
-    audit_path = ws / "product_audit.md"
-    product_audit = audit_path.read_text() if audit_path.exists() else ""
-    save_artifact(project_dir, "product_audit.md", product_audit)
-
-    cpo_passed = _parse_verdict(product_audit)
-
-    if not cpo_passed:
-        cpo_retries = state.get("cpo_retries", 0)
-        ui.info(f"Product Audit FAILED (attempt {cpo_retries + 1})")
-    else:
-        ui.info("Product Audit PASSED ✓")
-
-    return product_audit, cpo_passed
-
-
-async def _run_fix_cycle(
-    state: KindleState,
-    ws: Path,
-    ui: UI,
-    project_dir: Path,
-    *,
-    qa_passed: bool,
-    cpo_passed: bool,
-    qa_report: str,
-    product_audit: str,
-    qa_retries: int,
-    cpo_retries: int,
-) -> dict:
-    """Run self-healing dev fix agent if QA or product audit failed.
-
-    Returns:
-        A dict with updated ``qa_retries`` and ``cpo_retries`` counts.
-    """
+    # Determine if we need to self-heal
     needs_fix = False
     fix_report = ""
 
@@ -255,8 +216,7 @@ async def _run_fix_cycle(
         cpo_retries += 1
 
     if needs_fix:
-        architecture = state.get("architecture", "")
-        feature_spec = state.get("feature_spec", {})
+        # Run a dev fix agent
         ui.info("Running self-healing dev fix...")
         fix_prompt = (
             f"Fix the issues found in the QA report.\n\n"
@@ -278,35 +238,9 @@ async def _run_fix_cycle(
             max_turns=state.get("max_agent_turns", 50),
         )
 
-    return {"qa_retries": qa_retries, "cpo_retries": cpo_retries}
+    overall_passed = qa_passed and cpo_passed
 
-
-async def qa_node(state: KindleState, ui: UI) -> dict:
-    """LangGraph node: run Technical QA + Product Audit."""
-    project_dir, ws = stage_setup(state, ui, "qa")
-    qa_retries = state.get("qa_retries", 0)
-    cpo_retries = state.get("cpo_retries", 0)
-
-    qa_report, qa_passed = await _run_qa_validation(state, ws, ui, project_dir)
-
-    product_audit, cpo_passed = "", False
-    if qa_passed:
-        product_audit, cpo_passed = await _run_product_audit(state, ws, ui, project_dir)
-
-    retries = await _run_fix_cycle(
-        state,
-        ws,
-        ui,
-        project_dir,
-        qa_passed=qa_passed,
-        cpo_passed=cpo_passed,
-        qa_report=qa_report,
-        product_audit=product_audit,
-        qa_retries=qa_retries,
-        cpo_retries=cpo_retries,
-    )
-
-    if qa_passed and cpo_passed:
+    if overall_passed:
         mark_stage_complete(project_dir, "qa")
 
     ui.stage_done("qa")
@@ -316,8 +250,8 @@ async def qa_node(state: KindleState, ui: UI) -> dict:
         "product_audit": product_audit,
         "qa_passed": qa_passed,
         "cpo_passed": cpo_passed,
-        "qa_retries": retries["qa_retries"],
-        "cpo_retries": retries["cpo_retries"],
+        "qa_retries": qa_retries,
+        "cpo_retries": cpo_retries,
         "current_stage": "qa",
     }
 
