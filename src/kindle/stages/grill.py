@@ -103,6 +103,33 @@ Write the file to the current working directory.
 """
 
 
+def _extract_question_fields(q: dict | str) -> tuple[str, str, str]:
+    """Extract (question, recommended_answer, category) from a question entry."""
+    if isinstance(q, dict):
+        return (
+            q.get("question", str(q)),
+            q.get("recommended_answer", "No recommendation"),
+            q.get("category", "general"),
+        )
+    return str(q), "No recommendation", "general"
+
+
+def _fill_remaining_defaults(
+    open_questions: list,
+    start_idx: int,
+    transcript_lines: list[str],
+    decisions: list[dict],
+) -> None:
+    """Fill remaining questions (after early exit) with their recommended answers."""
+    for j, remaining in enumerate(open_questions[start_idx:], start_idx + 1):
+        rq, rr, rc = _extract_question_fields(remaining)
+        transcript_lines.append(f"Q{j} [{rc}]: {rq}")
+        transcript_lines.append(f"  Recommended: {rr}")
+        transcript_lines.append(f"  Answer: {rr} (auto-default)")
+        transcript_lines.append("")
+        decisions.append({"question": rq, "recommended": rr, "answer": rr, "category": rc})
+
+
 async def grill_node(state: KindleState, ui: UI) -> dict:
     """LangGraph node: interrogate the human to build a complete feature spec."""
     ui.stage_start("grill")
@@ -148,9 +175,7 @@ async def grill_node(state: KindleState, ui: UI) -> dict:
     decisions: list[dict] = []
 
     for i, q in enumerate(open_questions, 1):
-        question = q.get("question", str(q)) if isinstance(q, dict) else str(q)
-        recommended = q.get("recommended_answer", "No recommendation") if isinstance(q, dict) else "No recommendation"
-        category = q.get("category", "general") if isinstance(q, dict) else "general"
+        question, recommended, category = _extract_question_fields(q)
 
         answer = ui.grill_question(question, recommended, category, i)
 
@@ -166,19 +191,7 @@ async def grill_node(state: KindleState, ui: UI) -> dict:
                 {"question": question, "recommended": recommended, "answer": recommended, "category": category}
             )
             # Fill in remaining questions with defaults
-            for j, remaining in enumerate(open_questions[i:], i + 1):
-                rq = remaining.get("question", str(remaining)) if isinstance(remaining, dict) else str(remaining)
-                rr = (
-                    remaining.get("recommended_answer", "No recommendation")
-                    if isinstance(remaining, dict)
-                    else "No recommendation"
-                )
-                rc = remaining.get("category", "general") if isinstance(remaining, dict) else "general"
-                transcript_lines.append(f"Q{j} [{rc}]: {rq}")
-                transcript_lines.append(f"  Recommended: {rr}")
-                transcript_lines.append(f"  Answer: {rr} (auto-default)")
-                transcript_lines.append("")
-                decisions.append({"question": rq, "recommended": rr, "answer": rr, "category": rc})
+            _fill_remaining_defaults(open_questions, i, transcript_lines, decisions)
             break
 
         transcript_lines.append(f"Q{i} [{category}]: {question}")
@@ -228,8 +241,7 @@ async def grill_node(state: KindleState, ui: UI) -> dict:
 
     # Clean up temp files
     for p in [questions_path, spec_path]:
-        if p.exists():
-            p.unlink()
+        p.unlink(missing_ok=True)
 
     mark_stage_complete(project_dir, "grill")
     ui.stage_done("grill")
