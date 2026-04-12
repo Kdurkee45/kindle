@@ -91,7 +91,7 @@ def build_graph(ui: UI, *, entry_stage: str = "grill") -> CompiledStateGraph:
     for stage in ORDERED_STAGES:
         if stage in active:
             for name, fn in _NODE_FACTORIES[stage](ui):
-                graph.add_node(name, _wrap(fn, ui))  # type: ignore[call-overload]
+                graph.add_node(name, _wrap(fn, ui))
 
     # Wire edges
     graph.add_edge(START, entry_stage)
