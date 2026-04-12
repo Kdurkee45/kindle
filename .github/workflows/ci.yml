@@ -40,6 +40,9 @@ jobs:
       - name: Type check (mypy)
         run: uv run mypy src/kindle/
 
+      - name: Clean bytecache
+        run: find . -type d -name __pycache__ -exec rm -rf {} + 2>/dev/null || true
+
       - name: Test with coverage (pytest)
         run: uv run pytest --cov=kindle --cov-report=xml --cov-fail-under=80
 
