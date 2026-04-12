@@ -1,0 +1,82 @@
+{
+  "timestamp": "2026-04-12T01:15:00Z",
+  "project": {
+    "languages": [
+      "python"
+    ],
+    "loc": 9110,
+    "files": 27
+  },
+  "services": [
+    {
+      "name": ".",
+      "language": "python",
+      "framework": "typer+langgraph+claude-agent-sdk",
+      "package_manager": "uv",
+      "test_runner": "pytest",
+      "linter": "ruff",
+      "type_checker": "mypy",
+      "loc": 9110,
+      "files": 27
+    }
+  ],
+  "scores": {
+    "lint_violations": 21,
+    "lint_violations_source": 7,
+    "lint_violations_tests": 14,
+    "type_errors": 3,
+    "complexity_violations": 2,
+    "security_findings_critical": 0,
+    "security_findings_high": 0,
+    "security_findings_medium": 1,
+    "security_findings_low": 2,
+    "test_passed": 434,
+    "test_failed": 0,
+    "test_skipped": 0,
+    "test_coverage_pct": 74,
+    "untested_modules": [
+      "src/kindle/cli.py",
+      "src/kindle/ui.py",
+      "src/kindle/agent.py"
+    ],
+    "ci_gaps": [
+      "no CI config at all",
+      "CI does not run tests on PRs",
+      "no linter in CI",
+      "no type checker in CI",
+      "no dependency audit in CI"
+    ],
+    "duplicate_blocks": 5,
+    "dead_code_lines": 8,
+    "dependency_vulnerabilities": 0,
+    "runtime_bugs": [
+      {
+        "file": "src/kindle/stages/qa.py",
+        "line": 95,
+        "description": "Missing import: Path is not defined — NameError at runtime"
+      },
+      {
+        "file": "src/kindle/stages/architect.py",
+        "line": 148,
+        "description": "API mismatch: prompt_arch_review() called without required arch_summary argument — TypeError at runtime when --review-arch flag is used"
+      }
+    ]
+  },
+  "coverage_by_module": {
+    "src/kindle/__init__.py": 100,
+    "src/kindle/agent.py": 33,
+    "src/kindle/artifacts.py": 100,
+    "src/kindle/cli.py": 0,
+    "src/kindle/config.py": 100,
+    "src/kindle/graph.py": 100,
+    "src/kindle/stages/__init__.py": 100,
+    "src/kindle/stages/architect.py": 100,
+    "src/kindle/stages/dev.py": 100,
+    "src/kindle/stages/grill.py": 100,
+    "src/kindle/stages/package.py": 100,
+    "src/kindle/stages/qa.py": 96,
+    "src/kindle/stages/research.py": 100,
+    "src/kindle/state.py": 100,
+    "src/kindle/ui.py": 26
+  }
+}
