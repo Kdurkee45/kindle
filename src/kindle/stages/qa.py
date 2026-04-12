@@ -106,20 +106,33 @@ def _find_workspace_python(ws: Path) -> str:
     return "python3"
 
 
-async def qa_node(state: KindleState, ui: UI) -> dict:
-    """LangGraph node: run Technical QA + Product Audit."""
-    ui.stage_start("qa")
-    project_dir = state["project_dir"]
-    feature_spec = state.get("feature_spec", {})
-    architecture = state.get("architecture", "")
-    ws = workspace_path(project_dir)
-    qa_retries = state.get("qa_retries", 0)
-    cpo_retries = state.get("cpo_retries", 0)
+def _parse_verdict(report: str) -> bool:
+    """Parse a QA/audit report and return True if the overall verdict is PASS.
 
-    # ── 5A: Technical QA ──────────────────────────────────────────
+    Handles two verdict formats:
+      1. Report contains PASS and no FAIL after the last "VERDICT" marker.
+      2. A line matching "verdict.*pass" (case-insensitive).
+    """
+    if not report:
+        return False
+    upper = report.upper()
+    if "PASS" in upper and "FAIL" not in upper.split("VERDICT")[-1]:
+        return True
+    if "verdict" in report.lower():
+        for line in report.lower().split("\n"):
+            if "verdict" in line and "pass" in line:
+                return True
+    return False
+
+
+async def _run_technical_qa(state: KindleState, ui: UI, ws, project_dir: str) -> tuple[str, bool]:
+    """Run technical QA sub-stage and return (report_text, passed)."""
     ui.info("Running Technical QA...")
     workspace_python = _find_workspace_python(ws)
     ui.stage_log("qa", f"Using Python: {workspace_python}")
+
+    architecture = state.get("architecture", "")
+    feature_spec = state.get("feature_spec", {})
 
     tech_prompt = (
         f"Run technical QA on the project in the working directory.\n\n"
@@ -142,110 +155,106 @@ async def qa_node(state: KindleState, ui: UI) -> dict:
         max_turns=state.get("max_agent_turns", 50),
     )
 
-    # Read QA report
     qa_report_path = ws / "qa_report.md"
     qa_report = qa_report_path.read_text() if qa_report_path.exists() else ""
     save_artifact(project_dir, "qa_report.md", qa_report)
 
-    qa_passed = (
-        "PASS" in qa_report.upper() and "FAIL" not in qa_report.upper().split("VERDICT")[-1] if qa_report else False
-    )
-    if not qa_passed and "verdict" in qa_report.lower():
-        # More nuanced check — look for "verdict: pass" pattern
-        for line in qa_report.lower().split("\n"):
-            if "verdict" in line and "pass" in line:
-                qa_passed = True
-                break
+    qa_passed = _parse_verdict(qa_report)
+    return qa_report, qa_passed
 
+
+async def _run_product_audit(state: KindleState, ui: UI, ws, project_dir: str) -> tuple[str, bool]:
+    """Run product audit sub-stage and return (report_text, passed)."""
+    ui.info("Running Product Audit (anti-slop detection)...")
+    feature_spec = state.get("feature_spec", {})
+
+    audit_prompt = (
+        f"Perform a product audit on the project in the working directory.\n\n"
+        f"FEATURE SPEC:\n{json.dumps(feature_spec, indent=2)}\n\n"
+        f"Read every source file. Check for slop, placeholders, spec compliance. "
+        f"Write product_audit.md to the working directory."
+    )
+
+    await run_agent(
+        persona="VP of Product (Anti-Slop Auditor)",
+        system_prompt=PRODUCT_AUDIT_SYSTEM_PROMPT,
+        user_prompt=audit_prompt,
+        cwd=str(ws),
+        project_dir=project_dir,
+        stage="qa_product_audit",
+        ui=ui,
+        model=state.get("model"),
+        max_turns=state.get("max_agent_turns", 50),
+    )
+
+    audit_path = ws / "product_audit.md"
+    product_audit = audit_path.read_text() if audit_path.exists() else ""
+    save_artifact(project_dir, "product_audit.md", product_audit)
+
+    cpo_passed = _parse_verdict(product_audit)
+    return product_audit, cpo_passed
+
+
+async def _run_self_heal(state: KindleState, ui: UI, ws, project_dir: str, fix_report: str) -> None:
+    """Run a dev-fix agent to address issues found by QA."""
+    ui.info("Running self-healing dev fix...")
+    architecture = state.get("architecture", "")
+    feature_spec = state.get("feature_spec", {})
+
+    fix_prompt = (
+        f"Fix the issues found in the QA report.\n\n"
+        f"QA REPORT:\n{fix_report}\n\n"
+        f"ARCHITECTURE:\n{architecture}\n\n"
+        f"FEATURE SPEC:\n{json.dumps(feature_spec, indent=2)}\n\n"
+        f"Fix every issue. Ensure the project passes all checks."
+    )
+
+    await run_agent(
+        persona="Principal Software Engineer (QA Fix)",
+        system_prompt=DEV_FIX_SYSTEM_PROMPT,
+        user_prompt=fix_prompt,
+        cwd=str(ws),
+        project_dir=project_dir,
+        stage="qa_fix",
+        ui=ui,
+        model=state.get("model"),
+        max_turns=state.get("max_agent_turns", 50),
+    )
+
+
+async def qa_node(state: KindleState, ui: UI) -> dict:
+    """LangGraph node: run Technical QA + Product Audit."""
+    ui.stage_start("qa")
+    project_dir = state["project_dir"]
+    ws = workspace_path(project_dir)
+    qa_retries = state.get("qa_retries", 0)
+    cpo_retries = state.get("cpo_retries", 0)
+
+    # ── 5A: Technical QA ──────────────────────────────────────────
+    qa_report, qa_passed = await _run_technical_qa(state, ui, ws, project_dir)
     if not qa_passed:
         ui.info(f"Technical QA FAILED (attempt {qa_retries + 1})")
     else:
         ui.info("Technical QA PASSED ✓")
 
     # ── 5B: Product Audit ─────────────────────────────────────────
-    cpo_passed = False
-    product_audit = ""
-
+    product_audit, cpo_passed = "", False
     if qa_passed:
-        ui.info("Running Product Audit (anti-slop detection)...")
-        audit_prompt = (
-            f"Perform a product audit on the project in the working directory.\n\n"
-            f"FEATURE SPEC:\n{json.dumps(feature_spec, indent=2)}\n\n"
-            f"Read every source file. Check for slop, placeholders, spec compliance. "
-            f"Write product_audit.md to the working directory."
-        )
-
-        await run_agent(
-            persona="VP of Product (Anti-Slop Auditor)",
-            system_prompt=PRODUCT_AUDIT_SYSTEM_PROMPT,
-            user_prompt=audit_prompt,
-            cwd=str(ws),
-            project_dir=project_dir,
-            stage="qa_product_audit",
-            ui=ui,
-            model=state.get("model"),
-            max_turns=state.get("max_agent_turns", 50),
-        )
-
-        audit_path = ws / "product_audit.md"
-        product_audit = audit_path.read_text() if audit_path.exists() else ""
-        save_artifact(project_dir, "product_audit.md", product_audit)
-
-        cpo_passed = (
-            "PASS" in product_audit.upper() and "FAIL" not in product_audit.upper().split("VERDICT")[-1]
-            if product_audit
-            else False
-        )
-        if not cpo_passed and "verdict" in product_audit.lower():
-            for line in product_audit.lower().split("\n"):
-                if "verdict" in line and "pass" in line:
-                    cpo_passed = True
-                    break
-
+        product_audit, cpo_passed = await _run_product_audit(state, ui, ws, project_dir)
         if not cpo_passed:
             ui.info(f"Product Audit FAILED (attempt {cpo_retries + 1})")
         else:
             ui.info("Product Audit PASSED ✓")
 
-    # Determine if we need to self-heal
-    needs_fix = False
-    fix_report = ""
-
+    # ── Self-heal if needed ───────────────────────────────────────
     if not qa_passed:
-        needs_fix = True
-        fix_report = qa_report
         qa_retries += 1
+        await _run_self_heal(state, ui, ws, project_dir, qa_report)
     elif not cpo_passed:
-        needs_fix = True
-        fix_report = product_audit
         cpo_retries += 1
+        await _run_self_heal(state, ui, ws, project_dir, product_audit)
 
-    if needs_fix:
-        # Run a dev fix agent
-        ui.info("Running self-healing dev fix...")
-        fix_prompt = (
-            f"Fix the issues found in the QA report.\n\n"
-            f"QA REPORT:\n{fix_report}\n\n"
-            f"ARCHITECTURE:\n{architecture}\n\n"
-            f"FEATURE SPEC:\n{json.dumps(feature_spec, indent=2)}\n\n"
-            f"Fix every issue. Ensure the project passes all checks."
-        )
-
-        await run_agent(
-            persona="Principal Software Engineer (QA Fix)",
-            system_prompt=DEV_FIX_SYSTEM_PROMPT,
-            user_prompt=fix_prompt,
-            cwd=str(ws),
-            project_dir=project_dir,
-            stage="qa_fix",
-            ui=ui,
-            model=state.get("model"),
-            max_turns=state.get("max_agent_turns", 50),
-        )
-
-    overall_passed = qa_passed and cpo_passed
-
-    if overall_passed:
+    if qa_passed and cpo_passed:
         mark_stage_complete(project_dir, "qa")
 
     ui.stage_done("qa")
