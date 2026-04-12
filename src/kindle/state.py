@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Annotated, TypedDict
+from typing import Annotated, Any, TypedDict
 
 
 def _replace(a: str, b: str) -> str:
@@ -18,11 +18,11 @@ def _replace_int(a: int, b: int) -> int:
     return b
 
 
-def _replace_list(a: list, b: list) -> list:
+def _replace_list(a: list[Any], b: list[Any]) -> list[Any]:
     return b
 
 
-def _replace_dict(a: dict, b: dict) -> dict:
+def _replace_dict(a: dict[str, Any], b: dict[str, Any]) -> dict[str, Any]:
     return b
 
 
