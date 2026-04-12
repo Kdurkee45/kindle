@@ -158,7 +158,7 @@ async def dev_node(state: KindleState, ui: UI) -> dict:
 
         results = await asyncio.gather(*coros, return_exceptions=True)
         for r in results:
-            if isinstance(r, BaseException):
+            if isinstance(r, Exception):
                 ui.error(f"Dev task failed: {r}")
                 all_results.append({"status": "failed", "error": str(r)})
             else:
