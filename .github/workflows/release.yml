@@ -45,7 +45,7 @@ jobs:
         run: uv run mypy src/kindle/
 
       - name: Test with coverage (pytest)
-        run: uv run pytest --cov=kindle --cov-report=xml --cov-fail-under=65
+        run: uv run pytest --cov=kindle --cov-report=xml --cov-fail-under=80
 
   build:
     name: "Build Package"
@@ -81,7 +81,6 @@ jobs:
     environment: release
     permissions:
       contents: read
-      id-token: write
 
     steps:
       - name: Download build artifacts
@@ -90,7 +89,7 @@ jobs:
           name: dist
           path: dist/
 
-      - name: Publish to PyPI (trusted publishing)
+      - name: Publish to PyPI
         uses: pypa/gh-action-pypi-publish@release/v1
         with:
           password: ${{ secrets.PYPI_TOKEN }}
