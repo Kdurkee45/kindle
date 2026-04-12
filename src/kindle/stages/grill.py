@@ -9,6 +9,7 @@ In auto-approve mode, all recommended answers are used automatically.
 from __future__ import annotations
 
 import json
+from pathlib import Path
 
 from kindle.agent import run_agent
 from kindle.artifacts import mark_stage_complete, save_artifact
@@ -131,13 +132,21 @@ def _fill_remaining_defaults(
         decisions.append({"question": rq, "recommended": rr, "answer": rr, "category": rc})
 
 
-async def grill_node(state: KindleState, ui: UI) -> dict:
-    """LangGraph node: interrogate the human to build a complete feature spec."""
-    project_dir, ws = stage_setup(state, ui, "grill")
+async def _generate_questions(
+    state: KindleState,
+    ws: Path,
+    ui: UI,
+    project_dir: Path,
+) -> list[dict]:
+    """Generate focused questions via the interrogation agent.
+
+    Returns:
+        A list of question dicts, each containing ``question``,
+        ``recommended_answer``, and ``category`` keys.
+    """
     idea = state.get("idea", "")
     stack_pref = state.get("stack_preference", "")
 
-    # Generate questions via agent
     gen_prompt = f"Generate focused questions for building this application.\n\nIDEA: {idea}"
     if stack_pref:
         gen_prompt += f"\nSTACK PREFERENCE: {stack_pref}"
@@ -156,7 +165,6 @@ async def grill_node(state: KindleState, ui: UI) -> dict:
         allowed_tools=["Read", "Write", "Bash"],
     )
 
-    # Load generated questions
     questions_path = ws / "open_questions.json"
     open_questions: list[dict] = []
     if questions_path.exists():
@@ -169,7 +177,19 @@ async def grill_node(state: KindleState, ui: UI) -> dict:
     if not open_questions:
         ui.info("No questions generated — proceeding with idea as-is.")
 
-    # Walk through questions one at a time
+    return open_questions
+
+
+def _conduct_qa_session(
+    open_questions: list[dict],
+    ui: UI,
+) -> tuple[list[dict], str]:
+    """Walk through questions interactively, collecting user answers.
+
+    Returns:
+        A ``(decisions, grill_transcript)`` tuple where *decisions* is a list
+        of answer dicts and *grill_transcript* is the formatted Q&A text.
+    """
     transcript_lines: list[str] = []
     decisions: list[dict] = []
 
@@ -181,7 +201,6 @@ async def grill_node(state: KindleState, ui: UI) -> dict:
         # Check for early exit
         if answer.lower() == "done":
             ui.info("User requested early exit — using defaults for remaining questions.")
-            # Record the current question with its recommended answer
             transcript_lines.append(f"Q{i} [{category}]: {question}")
             transcript_lines.append(f"  Recommended: {recommended}")
             transcript_lines.append(f"  Answer: {recommended} (auto-default, user said done)")
@@ -189,7 +208,6 @@ async def grill_node(state: KindleState, ui: UI) -> dict:
             decisions.append(
                 {"question": question, "recommended": recommended, "answer": recommended, "category": category}
             )
-            # Fill in remaining questions with defaults
             _fill_remaining_defaults(open_questions, i, transcript_lines, decisions)
             break
 
@@ -200,10 +218,24 @@ async def grill_node(state: KindleState, ui: UI) -> dict:
 
         decisions.append({"question": question, "recommended": recommended, "answer": answer, "category": category})
 
-    grill_transcript = "\n".join(transcript_lines)
-    save_artifact(project_dir, "grill_transcript.md", grill_transcript)
+    return decisions, "\n".join(transcript_lines)
 
-    # Compile decisions into feature spec using an agent
+
+async def _compile_feature_spec(
+    state: KindleState,
+    ws: Path,
+    ui: UI,
+    project_dir: Path,
+    grill_transcript: str,
+) -> dict:
+    """Compile grill decisions into a definitive feature specification.
+
+    Returns:
+        The parsed feature-spec dict read from the agent-generated JSON file.
+    """
+    idea = state.get("idea", "")
+    stack_pref = state.get("stack_preference", "")
+
     ui.info("Compiling feature specification from decisions...")
 
     compile_prompt = (
@@ -227,7 +259,6 @@ async def grill_node(state: KindleState, ui: UI) -> dict:
         allowed_tools=["Read", "Write", "Bash"],
     )
 
-    # Read compiled spec
     spec_path = ws / "feature_spec.json"
     feature_spec: dict = {}
     if spec_path.exists():
@@ -236,10 +267,24 @@ async def grill_node(state: KindleState, ui: UI) -> dict:
         except json.JSONDecodeError:
             ui.error("Failed to parse feature_spec.json.")
 
+    return feature_spec
+
+
+async def grill_node(state: KindleState, ui: UI) -> dict:
+    """LangGraph node: interrogate the human to build a complete feature spec."""
+    project_dir, ws = stage_setup(state, ui, "grill")
+
+    open_questions = await _generate_questions(state, ws, ui, project_dir)
+    decisions, grill_transcript = _conduct_qa_session(open_questions, ui)
+
+    save_artifact(project_dir, "grill_transcript.md", grill_transcript)
+
+    feature_spec = await _compile_feature_spec(state, ws, ui, project_dir, grill_transcript)
+
     save_artifact(project_dir, "feature_spec.json", json.dumps(feature_spec, indent=2))
 
     # Clean up temp files
-    for p in [questions_path, spec_path]:
+    for p in [ws / "open_questions.json", ws / "feature_spec.json"]:
         p.unlink(missing_ok=True)
 
     mark_stage_complete(project_dir, "grill")
