@@ -2,7 +2,7 @@
 
     Grill → Research → Architect → Dev → QA (↔ self-heal) → Package
 
-QA has a conditional edge that loops back for self-healing when checks fail.
+QA has a conditional edge that re-runs itself with an internal fix agent when checks fail.
 """
 
 from __future__ import annotations
@@ -64,7 +64,8 @@ def _wire_edges(graph: StateGraph, active: set[str]) -> None:
         if required <= active:
             graph.add_edge(src, dst)
 
-    # QA conditional routing (self-healing loop)
+    # QA conditional routing: on failure, qa_router maps qa→qa so the QA
+    # node re-runs its internal fix agent; on success it routes to package.
     if {"qa", "package"} <= active:
         graph.add_conditional_edges(
             "qa",
