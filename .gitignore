@@ -38,3 +38,5 @@ htmlcov/
 
 # ruff
 .ruff_cache/
+coverage.json
+coverage_report.json
