@@ -84,7 +84,7 @@ async def package_node(state: KindleState, ui: UI) -> dict:
         "atomic commits per dev task, and optionally add a Dockerfile.",
     ]
 
-    result = await run_agent(
+    await run_agent(
         persona="Principal DevOps Engineer",
         system_prompt=SYSTEM_PROMPT,
         user_prompt="\n".join(prompt_parts),

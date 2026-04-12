@@ -83,7 +83,7 @@ def build(
     }
 
     compiled = build_graph(ui)
-    result = asyncio.run(compiled.ainvoke(initial_state))
+    asyncio.run(compiled.ainvoke(initial_state))
 
     ws = workspace_path(str(project_dir))
     ui.info(f"Project built at: {ws}")
@@ -167,7 +167,7 @@ def resume(
     }
 
     compiled = build_graph(ui, entry_stage=from_stage)
-    result = asyncio.run(compiled.ainvoke(state))
+    asyncio.run(compiled.ainvoke(state))
 
     ws = workspace_path(str(project_dir))
     ui.info(f"Project at: {ws}")

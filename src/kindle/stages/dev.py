@@ -99,7 +99,6 @@ async def _run_task(
 
 def _topological_sort(tasks: list[dict]) -> list[list[dict]]:
     """Sort tasks into layers by dependencies. Tasks in the same layer can run in parallel."""
-    task_map = {t.get("task_id", f"task_{i:02d}"): t for i, t in enumerate(tasks)}
     completed: set[str] = set()
     layers: list[list[dict]] = []
 
