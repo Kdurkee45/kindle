@@ -145,7 +145,7 @@ async def architect_node(state: KindleState, ui: UI) -> dict:
     # Optional human review of architecture before building
     if state.get("review_arch") and not state.get("auto_approve"):
         ui.show_artifact("Architecture", architecture)
-        approved, feedback = ui.prompt_arch_review()
+        approved, feedback = ui.prompt_arch_review(architecture)
         if not approved:
             ui.info(f"Architecture feedback: {feedback}")
             ui.info("Architecture revision not yet implemented — proceeding with current design.")
