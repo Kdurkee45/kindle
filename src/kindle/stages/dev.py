@@ -10,8 +10,8 @@ import asyncio
 import json
 
 from kindle.agent import run_agent
-from kindle.artifacts import mark_stage_complete, save_artifact, workspace_path
-from kindle.stages._helpers import stage_setup
+from kindle.artifacts import save_artifact, workspace_path
+from kindle.stages._helpers import stage_setup, stage_teardown
 from kindle.state import KindleState
 from kindle.ui import UI
 
@@ -136,8 +136,7 @@ async def dev_node(state: KindleState, ui: UI) -> dict:
 
     if not dev_tasks:
         ui.error("No dev tasks found — skipping dev stage.")
-        mark_stage_complete(project_dir, "dev")
-        ui.stage_done("dev")
+        stage_teardown(project_dir, "dev", ui)
         return {"current_stage": "dev"}
 
     semaphore = asyncio.Semaphore(max_concurrent)
@@ -165,7 +164,6 @@ async def dev_node(state: KindleState, ui: UI) -> dict:
 
     save_artifact(project_dir, "dev_results.json", json.dumps(all_results, indent=2))
 
-    mark_stage_complete(project_dir, "dev")
-    ui.stage_done("dev")
+    stage_teardown(project_dir, "dev", ui)
 
     return {"current_stage": "dev"}

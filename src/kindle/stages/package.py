@@ -10,7 +10,7 @@ import json
 
 from kindle.agent import run_agent
 from kindle.artifacts import mark_project_done, mark_stage_complete, save_artifact
-from kindle.stages._helpers import stage_setup
+from kindle.stages._helpers import load_text_artifact, stage_setup
 from kindle.state import KindleState
 from kindle.ui import UI
 
@@ -97,7 +97,7 @@ async def package_node(state: KindleState, ui: UI) -> dict:
 
     # Read the README if generated
     readme_path = ws / "README.md"
-    package_readme = readme_path.read_text() if readme_path.exists() else ""
+    package_readme = load_text_artifact(readme_path)
     if package_readme:
         save_artifact(project_dir, "package_readme.md", package_readme)
 

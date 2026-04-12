@@ -11,8 +11,8 @@ from __future__ import annotations
 import json
 
 from kindle.agent import run_agent
-from kindle.artifacts import mark_stage_complete, save_artifact
-from kindle.stages._helpers import stage_setup
+from kindle.artifacts import save_artifact
+from kindle.stages._helpers import cleanup_workspace_files, load_json_artifact, stage_setup, stage_teardown
 from kindle.state import KindleState
 from kindle.ui import UI
 
@@ -158,13 +158,8 @@ async def grill_node(state: KindleState, ui: UI) -> dict:
 
     # Load generated questions
     questions_path = ws / "open_questions.json"
-    open_questions: list[dict] = []
-    if questions_path.exists():
-        try:
-            data = json.loads(questions_path.read_text())
-            open_questions = data if isinstance(data, list) else []
-        except json.JSONDecodeError:
-            ui.error("Failed to parse open_questions.json")
+    data = load_json_artifact(questions_path)
+    open_questions: list[dict] = data if isinstance(data, list) else []
 
     if not open_questions:
         ui.info("No questions generated — proceeding with idea as-is.")
@@ -229,21 +224,14 @@ async def grill_node(state: KindleState, ui: UI) -> dict:
 
     # Read compiled spec
     spec_path = ws / "feature_spec.json"
-    feature_spec: dict = {}
-    if spec_path.exists():
-        try:
-            feature_spec = json.loads(spec_path.read_text())
-        except json.JSONDecodeError:
-            ui.error("Failed to parse feature_spec.json.")
+    feature_spec = load_json_artifact(spec_path) or {}
 
     save_artifact(project_dir, "feature_spec.json", json.dumps(feature_spec, indent=2))
 
     # Clean up temp files
-    for p in [questions_path, spec_path]:
-        p.unlink(missing_ok=True)
+    cleanup_workspace_files(questions_path, spec_path)
 
-    mark_stage_complete(project_dir, "grill")
-    ui.stage_done("grill")
+    stage_teardown(project_dir, "grill", ui)
 
     return {
         "feature_spec": feature_spec,

@@ -14,7 +14,7 @@ from pathlib import Path
 
 from kindle.agent import run_agent
 from kindle.artifacts import mark_stage_complete, save_artifact
-from kindle.stages._helpers import stage_setup
+from kindle.stages._helpers import load_text_artifact, stage_setup
 from kindle.state import KindleState
 from kindle.ui import UI
 
@@ -156,7 +156,7 @@ async def qa_node(state: KindleState, ui: UI) -> dict:
 
     # Read QA report
     qa_report_path = ws / "qa_report.md"
-    qa_report = qa_report_path.read_text() if qa_report_path.exists() else ""
+    qa_report = load_text_artifact(qa_report_path)
     save_artifact(project_dir, "qa_report.md", qa_report)
 
     qa_passed = _parse_verdict(qa_report)
@@ -192,7 +192,7 @@ async def qa_node(state: KindleState, ui: UI) -> dict:
         )
 
         audit_path = ws / "product_audit.md"
-        product_audit = audit_path.read_text() if audit_path.exists() else ""
+        product_audit = load_text_artifact(audit_path)
         save_artifact(project_dir, "product_audit.md", product_audit)
 
         cpo_passed = _parse_verdict(product_audit)
