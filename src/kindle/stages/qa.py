@@ -148,9 +148,7 @@ async def qa_node(state: KindleState, ui: UI) -> dict:
     qa_report = qa_report_path.read_text() if qa_report_path.exists() else ""
     save_artifact(project_dir, "qa_report.md", qa_report)
 
-    qa_passed = (
-        "PASS" in qa_report.upper() and "FAIL" not in qa_report.upper().split("VERDICT")[-1] if qa_report else False
-    )
+    qa_passed = "PASS" in qa_report.upper() and "FAIL" not in qa_report.upper().split("VERDICT")[-1] if qa_report else False
     if not qa_passed and "verdict" in qa_report.lower():
         # More nuanced check — look for "verdict: pass" pattern
         for line in qa_report.lower().split("\n"):
@@ -192,11 +190,7 @@ async def qa_node(state: KindleState, ui: UI) -> dict:
         product_audit = audit_path.read_text() if audit_path.exists() else ""
         save_artifact(project_dir, "product_audit.md", product_audit)
 
-        cpo_passed = (
-            "PASS" in product_audit.upper() and "FAIL" not in product_audit.upper().split("VERDICT")[-1]
-            if product_audit
-            else False
-        )
+        cpo_passed = "PASS" in product_audit.upper() and "FAIL" not in product_audit.upper().split("VERDICT")[-1] if product_audit else False
         if not cpo_passed and "verdict" in product_audit.lower():
             for line in product_audit.lower().split("\n"):
                 if "verdict" in line and "pass" in line:

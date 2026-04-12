@@ -39,7 +39,9 @@ class Settings:
 
         api_key = os.environ.get("ANTHROPIC_API_KEY", "")
         if not api_key:
-            raise SystemExit("ANTHROPIC_API_KEY not set. Add it to a .env file or export it in your shell.")
+            raise SystemExit(
+                "ANTHROPIC_API_KEY not set. Add it to a .env file or export it in your shell."
+            )
 
         return cls(
             anthropic_api_key=api_key,

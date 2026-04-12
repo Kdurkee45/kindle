@@ -109,7 +109,9 @@ async def run_agent(
     raise RuntimeError(f"Agent ({persona}) failed after {MAX_RETRIES} attempts: {last_error}")
 
 
-def _process_message(message: Any, text_parts: list, tool_calls: list, stage: str, ui: UI, project_dir: str) -> None:
+def _process_message(
+    message: Any, text_parts: list, tool_calls: list, stage: str, ui: UI, project_dir: str
+) -> None:
     """Extract text and tool-use info from a single SDK message."""
     if not hasattr(message, "content"):
         return
