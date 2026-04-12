@@ -103,65 +103,6 @@ Write the file to the current working directory.
 """
 
 
-def _fill_remaining_defaults(questions: list[dict], start_index: int) -> tuple[list[str], list[dict]]:
-    """Fill remaining questions with their recommended answers after early exit."""
-    transcript_lines: list[str] = []
-    decisions: list[dict] = []
-    for j, remaining in enumerate(questions[start_index - 1 :], start_index):
-        rq = remaining.get("question", str(remaining)) if isinstance(remaining, dict) else str(remaining)
-        rr = (
-            remaining.get("recommended_answer", "No recommendation")
-            if isinstance(remaining, dict)
-            else "No recommendation"
-        )
-        rc = remaining.get("category", "general") if isinstance(remaining, dict) else "general"
-        transcript_lines.append(f"Q{j} [{rc}]: {rq}")
-        transcript_lines.append(f"  Recommended: {rr}")
-        transcript_lines.append(f"  Answer: {rr} (auto-default)")
-        transcript_lines.append("")
-        decisions.append({"question": rq, "recommended": rr, "answer": rr, "category": rc})
-    return transcript_lines, decisions
-
-
-def _walk_questions(questions: list[dict], ui: UI) -> tuple[list[str], list[dict]]:
-    """Walk through questions interactively, handling 'done' early-exit."""
-    transcript_lines: list[str] = []
-    decisions: list[dict] = []
-
-    for i, q in enumerate(questions, 1):
-        question = q.get("question", str(q)) if isinstance(q, dict) else str(q)
-        recommended = q.get("recommended_answer", "No recommendation") if isinstance(q, dict) else "No recommendation"
-        category = q.get("category", "general") if isinstance(q, dict) else "general"
-
-        answer = ui.grill_question(question, recommended, category, i)
-
-        # Check for early exit
-        if answer.lower() == "done":
-            ui.info("User requested early exit — using defaults for remaining questions.")
-            # Record the current question with its recommended answer
-            transcript_lines.append(f"Q{i} [{category}]: {question}")
-            transcript_lines.append(f"  Recommended: {recommended}")
-            transcript_lines.append(f"  Answer: {recommended} (auto-default, user said done)")
-            transcript_lines.append("")
-            decisions.append(
-                {"question": question, "recommended": recommended, "answer": recommended, "category": category}
-            )
-            # Fill in remaining questions with defaults
-            remaining_lines, remaining_decisions = _fill_remaining_defaults(questions, i + 1)
-            transcript_lines.extend(remaining_lines)
-            decisions.extend(remaining_decisions)
-            break
-
-        transcript_lines.append(f"Q{i} [{category}]: {question}")
-        transcript_lines.append(f"  Recommended: {recommended}")
-        transcript_lines.append(f"  Answer: {answer}")
-        transcript_lines.append("")
-
-        decisions.append({"question": question, "recommended": recommended, "answer": answer, "category": category})
-
-    return transcript_lines, decisions
-
-
 async def grill_node(state: KindleState, ui: UI) -> dict:
     """LangGraph node: interrogate the human to build a complete feature spec."""
     ui.stage_start("grill")
@@ -203,7 +144,49 @@ async def grill_node(state: KindleState, ui: UI) -> dict:
         ui.info("No questions generated — proceeding with idea as-is.")
 
     # Walk through questions one at a time
-    transcript_lines, _decisions = _walk_questions(open_questions, ui)
+    transcript_lines: list[str] = []
+    decisions: list[dict] = []
+
+    for i, q in enumerate(open_questions, 1):
+        question = q.get("question", str(q)) if isinstance(q, dict) else str(q)
+        recommended = q.get("recommended_answer", "No recommendation") if isinstance(q, dict) else "No recommendation"
+        category = q.get("category", "general") if isinstance(q, dict) else "general"
+
+        answer = ui.grill_question(question, recommended, category, i)
+
+        # Check for early exit
+        if answer.lower() == "done":
+            ui.info("User requested early exit — using defaults for remaining questions.")
+            # Record the current question with its recommended answer
+            transcript_lines.append(f"Q{i} [{category}]: {question}")
+            transcript_lines.append(f"  Recommended: {recommended}")
+            transcript_lines.append(f"  Answer: {recommended} (auto-default, user said done)")
+            transcript_lines.append("")
+            decisions.append(
+                {"question": question, "recommended": recommended, "answer": recommended, "category": category}
+            )
+            # Fill in remaining questions with defaults
+            for j, remaining in enumerate(open_questions[i:], i + 1):
+                rq = remaining.get("question", str(remaining)) if isinstance(remaining, dict) else str(remaining)
+                rr = (
+                    remaining.get("recommended_answer", "No recommendation")
+                    if isinstance(remaining, dict)
+                    else "No recommendation"
+                )
+                rc = remaining.get("category", "general") if isinstance(remaining, dict) else "general"
+                transcript_lines.append(f"Q{j} [{rc}]: {rq}")
+                transcript_lines.append(f"  Recommended: {rr}")
+                transcript_lines.append(f"  Answer: {rr} (auto-default)")
+                transcript_lines.append("")
+                decisions.append({"question": rq, "recommended": rr, "answer": rr, "category": rc})
+            break
+
+        transcript_lines.append(f"Q{i} [{category}]: {question}")
+        transcript_lines.append(f"  Recommended: {recommended}")
+        transcript_lines.append(f"  Answer: {answer}")
+        transcript_lines.append("")
+
+        decisions.append({"question": question, "recommended": recommended, "answer": answer, "category": category})
 
     grill_transcript = "\n".join(transcript_lines)
     save_artifact(project_dir, "grill_transcript.md", grill_transcript)
