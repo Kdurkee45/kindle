@@ -105,7 +105,7 @@ class TestSettingsLoad:
 
     @patch("kindle.config.load_dotenv")
     @patch("kindle.config._find_env_file", return_value=None)
-    def test_load_with_only_api_key_uses_defaults(self, mock_find: MagicMock, mock_dotenv: MagicMock) -> None:
+    def test_load_with_only_api_key_uses_defaults(self, _mock_find: MagicMock, _mock_dotenv: MagicMock) -> None:
         env = {"ANTHROPIC_API_KEY": "sk-test-key-123"}
         with patch.dict("os.environ", env, clear=True):
             settings = Settings.load()
@@ -118,7 +118,7 @@ class TestSettingsLoad:
 
     @patch("kindle.config.load_dotenv")
     @patch("kindle.config._find_env_file", return_value=None)
-    def test_load_with_all_env_vars_set(self, mock_find: MagicMock, mock_dotenv: MagicMock) -> None:
+    def test_load_with_all_env_vars_set(self, _mock_find: MagicMock, _mock_dotenv: MagicMock) -> None:
         env = {
             "ANTHROPIC_API_KEY": "sk-custom-key",
             "KINDLE_MODEL": "claude-sonnet-4-20250514",
@@ -138,7 +138,7 @@ class TestSettingsLoad:
 
     @patch("kindle.config.load_dotenv")
     @patch("kindle.config._find_env_file", return_value=None)
-    def test_load_partial_overrides(self, mock_find: MagicMock, mock_dotenv: MagicMock) -> None:
+    def test_load_partial_overrides(self, _mock_find: MagicMock, _mock_dotenv: MagicMock) -> None:
         """Only some optional vars set; rest use defaults."""
         env = {
             "ANTHROPIC_API_KEY": "sk-key",
@@ -163,7 +163,7 @@ class TestSettingsLoad:
 
     @patch("kindle.config.load_dotenv")
     @patch("kindle.config._find_env_file", return_value=None)
-    def test_load_skips_load_dotenv_when_no_env_file(self, mock_find: MagicMock, mock_dotenv: MagicMock) -> None:
+    def test_load_skips_load_dotenv_when_no_env_file(self, _mock_find: MagicMock, mock_dotenv: MagicMock) -> None:
         with patch.dict("os.environ", {"ANTHROPIC_API_KEY": "sk-key"}, clear=True):
             Settings.load()
         mock_dotenv.assert_not_called()
@@ -179,14 +179,14 @@ class TestSettingsLoadErrors:
 
     @patch("kindle.config.load_dotenv")
     @patch("kindle.config._find_env_file", return_value=None)
-    def test_missing_api_key_raises_system_exit(self, mock_find: MagicMock, mock_dotenv: MagicMock) -> None:
+    def test_missing_api_key_raises_system_exit(self, _mock_find: MagicMock, _mock_dotenv: MagicMock) -> None:
         with patch.dict("os.environ", {}, clear=True), pytest.raises(SystemExit) as exc_info:
             Settings.load()
         assert "ANTHROPIC_API_KEY" in str(exc_info.value)
 
     @patch("kindle.config.load_dotenv")
     @patch("kindle.config._find_env_file", return_value=None)
-    def test_empty_api_key_raises_system_exit(self, mock_find: MagicMock, mock_dotenv: MagicMock) -> None:
+    def test_empty_api_key_raises_system_exit(self, _mock_find: MagicMock, _mock_dotenv: MagicMock) -> None:
         with (
             patch.dict("os.environ", {"ANTHROPIC_API_KEY": ""}, clear=True),
             pytest.raises(SystemExit) as exc_info,
@@ -196,7 +196,7 @@ class TestSettingsLoadErrors:
 
     @patch("kindle.config.load_dotenv")
     @patch("kindle.config._find_env_file", return_value=None)
-    def test_system_exit_message_is_helpful(self, mock_find: MagicMock, mock_dotenv: MagicMock) -> None:
+    def test_system_exit_message_is_helpful(self, _mock_find: MagicMock, _mock_dotenv: MagicMock) -> None:
         with patch.dict("os.environ", {}, clear=True), pytest.raises(SystemExit) as exc_info:
             Settings.load()
         msg = str(exc_info.value)
