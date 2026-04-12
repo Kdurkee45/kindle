@@ -9,17 +9,11 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from kindle.stages.research import SYSTEM_PROMPT, research_node
+from tests.constants import SAMPLE_FEATURE_SPEC
 
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
-
-SAMPLE_FEATURE_SPEC = {
-    "app_name": "TaskFlow",
-    "idea": "a task management app",
-    "core_features": ["task CRUD", "auth"],
-    "tech_constraints": ["React frontend"],
-}
 
 SAMPLE_RESEARCH_REPORT = """\
 # Technology Landscape Research
@@ -38,34 +32,19 @@ SAMPLE_RESEARCH_REPORT = """\
 """
 
 
-def _make_state(tmp_path: Path, **overrides) -> dict:
-    """Build a minimal KindleState dict pointing at *tmp_path* as project_dir."""
-    project_dir = tmp_path / "project"
-    (project_dir / "artifacts").mkdir(parents=True, exist_ok=True)
-    (project_dir / "logs").mkdir(parents=True, exist_ok=True)
-    # metadata.json needed by mark_stage_complete
-    meta = {"project_id": "kindle_test1234", "stages_completed": []}
-    (project_dir / "metadata.json").write_text(json.dumps(meta))
+@pytest.fixture
+def research_state(make_state):
+    """Factory with research-stage defaults pre-applied."""
 
-    state: dict = {
-        "project_dir": str(project_dir),
-        "idea": "a task management app",
-        "feature_spec": SAMPLE_FEATURE_SPEC,
-        "stack_preference": "React + Node.js",
-    }
-    state.update(overrides)
-    return state
+    def _factory(**overrides):
+        defaults = {
+            "feature_spec": SAMPLE_FEATURE_SPEC,
+            "stack_preference": "React + Node.js",
+        }
+        defaults.update(overrides)
+        return make_state(**defaults)
 
-
-def _make_ui() -> MagicMock:
-    """Return a mock UI with the methods research_node actually calls."""
-    ui = MagicMock()
-    ui.auto_approve = False
-    ui.stage_start = MagicMock()
-    ui.stage_done = MagicMock()
-    ui.info = MagicMock()
-    ui.error = MagicMock()
-    return ui
+    return _factory
 
 
 # ---------------------------------------------------------------------------
@@ -77,10 +56,12 @@ class TestResearchHappyPath:
     """Agent generates research_report.md, it is read, saved as artifact, and returned."""
 
     @pytest.mark.asyncio
-    async def test_report_read_from_workspace_and_saved_as_artifact(self, tmp_path: Path) -> None:
+    async def test_report_read_from_workspace_and_saved_as_artifact(
+        self, tmp_path: Path, research_state, make_ui
+    ) -> None:
         """When agent writes research_report.md the file contents become the artifact."""
-        state = _make_state(tmp_path)
-        ui = _make_ui()
+        state = research_state()
+        ui = make_ui()
         ws = Path(state["project_dir"]) / "workspace"
 
         async def fake_run_agent(**kwargs):
@@ -99,10 +80,10 @@ class TestResearchHappyPath:
         assert artifact_path.read_text() == SAMPLE_RESEARCH_REPORT
 
     @pytest.mark.asyncio
-    async def test_workspace_file_cleaned_up_after_read(self, tmp_path: Path) -> None:
+    async def test_workspace_file_cleaned_up_after_read(self, tmp_path: Path, research_state, make_ui) -> None:
         """The workspace research_report.md is deleted after it's been read."""
-        state = _make_state(tmp_path)
-        ui = _make_ui()
+        state = research_state()
+        ui = make_ui()
         ws = Path(state["project_dir"]) / "workspace"
 
         async def fake_run_agent(**kwargs):
@@ -117,10 +98,10 @@ class TestResearchHappyPath:
         assert not (ws / "research_report.md").exists()
 
     @pytest.mark.asyncio
-    async def test_fallback_to_agent_text_when_no_file(self, tmp_path: Path) -> None:
+    async def test_fallback_to_agent_text_when_no_file(self, tmp_path: Path, research_state, make_ui) -> None:
         """If the agent never writes a file, we fall back to result.text."""
-        state = _make_state(tmp_path)
-        ui = _make_ui()
+        state = research_state()
+        ui = make_ui()
         fallback = "Agent returned this text instead of a file."
 
         async def fake_run_agent(**kwargs):
@@ -147,10 +128,10 @@ class TestPromptConstruction:
     """Verify the user prompt sent to run_agent contains all relevant state."""
 
     @pytest.mark.asyncio
-    async def test_prompt_includes_idea(self, tmp_path: Path) -> None:
+    async def test_prompt_includes_idea(self, tmp_path: Path, research_state, make_ui) -> None:
         """The user's original idea appears in the prompt."""
-        state = _make_state(tmp_path, idea="a social media dashboard")
-        ui = _make_ui()
+        state = research_state(idea="a social media dashboard")
+        ui = make_ui()
         ws = Path(state["project_dir"]) / "workspace"
 
         async def fake_run_agent(**kwargs):
@@ -166,10 +147,10 @@ class TestPromptConstruction:
         assert "a social media dashboard" in call_kwargs["user_prompt"]
 
     @pytest.mark.asyncio
-    async def test_prompt_includes_feature_spec_json(self, tmp_path: Path) -> None:
+    async def test_prompt_includes_feature_spec_json(self, tmp_path: Path, research_state, make_ui) -> None:
         """The full feature spec is serialized as JSON in the prompt."""
-        state = _make_state(tmp_path)
-        ui = _make_ui()
+        state = research_state()
+        ui = make_ui()
         ws = Path(state["project_dir"]) / "workspace"
 
         async def fake_run_agent(**kwargs):
@@ -187,10 +168,10 @@ class TestPromptConstruction:
         assert json.dumps(SAMPLE_FEATURE_SPEC, indent=2) in prompt
 
     @pytest.mark.asyncio
-    async def test_prompt_includes_stack_preference(self, tmp_path: Path) -> None:
+    async def test_prompt_includes_stack_preference(self, tmp_path: Path, research_state, make_ui) -> None:
         """When stack_preference is set, it appears in the prompt."""
-        state = _make_state(tmp_path, stack_preference="Python + FastAPI")
-        ui = _make_ui()
+        state = research_state(stack_preference="Python + FastAPI")
+        ui = make_ui()
         ws = Path(state["project_dir"]) / "workspace"
 
         async def fake_run_agent(**kwargs):
@@ -206,10 +187,10 @@ class TestPromptConstruction:
         assert "STACK PREFERENCE: Python + FastAPI" in call_kwargs["user_prompt"]
 
     @pytest.mark.asyncio
-    async def test_prompt_omits_stack_preference_when_empty(self, tmp_path: Path) -> None:
+    async def test_prompt_omits_stack_preference_when_empty(self, tmp_path: Path, research_state, make_ui) -> None:
         """When stack_preference is empty string, STACK PREFERENCE is not in prompt."""
-        state = _make_state(tmp_path, stack_preference="")
-        ui = _make_ui()
+        state = research_state(stack_preference="")
+        ui = make_ui()
         ws = Path(state["project_dir"]) / "workspace"
 
         async def fake_run_agent(**kwargs):
@@ -225,10 +206,10 @@ class TestPromptConstruction:
         assert "STACK PREFERENCE" not in call_kwargs["user_prompt"]
 
     @pytest.mark.asyncio
-    async def test_system_prompt_is_research_engineer(self, tmp_path: Path) -> None:
+    async def test_system_prompt_is_research_engineer(self, tmp_path: Path, research_state, make_ui) -> None:
         """The system prompt sent to run_agent is the SYSTEM_PROMPT constant."""
-        state = _make_state(tmp_path)
-        ui = _make_ui()
+        state = research_state()
+        ui = make_ui()
         ws = Path(state["project_dir"]) / "workspace"
 
         async def fake_run_agent(**kwargs):
@@ -254,11 +235,11 @@ class TestMissingOptionalState:
     """Graceful handling when optional keys are absent from state."""
 
     @pytest.mark.asyncio
-    async def test_missing_stack_preference(self, tmp_path: Path) -> None:
+    async def test_missing_stack_preference(self, tmp_path: Path, research_state, make_ui) -> None:
         """No KeyError when stack_preference is completely absent from state."""
-        state = _make_state(tmp_path)
+        state = research_state()
         del state["stack_preference"]  # remove entirely
-        ui = _make_ui()
+        ui = make_ui()
         ws = Path(state["project_dir"]) / "workspace"
 
         async def fake_run_agent(**kwargs):
@@ -276,11 +257,11 @@ class TestMissingOptionalState:
         assert "STACK PREFERENCE" not in call_kwargs["user_prompt"]
 
     @pytest.mark.asyncio
-    async def test_missing_feature_spec_defaults_to_empty_dict(self, tmp_path: Path) -> None:
+    async def test_missing_feature_spec_defaults_to_empty_dict(self, tmp_path: Path, research_state, make_ui) -> None:
         """feature_spec defaults to {} when absent."""
-        state = _make_state(tmp_path)
+        state = research_state()
         del state["feature_spec"]
-        ui = _make_ui()
+        ui = make_ui()
         ws = Path(state["project_dir"]) / "workspace"
 
         async def fake_run_agent(**kwargs):
@@ -297,11 +278,11 @@ class TestMissingOptionalState:
         assert result["research_report"] == "report"
 
     @pytest.mark.asyncio
-    async def test_missing_idea_defaults_to_empty_string(self, tmp_path: Path) -> None:
+    async def test_missing_idea_defaults_to_empty_string(self, tmp_path: Path, research_state, make_ui) -> None:
         """idea defaults to '' when absent."""
-        state = _make_state(tmp_path)
+        state = research_state()
         del state["idea"]
-        ui = _make_ui()
+        ui = make_ui()
         ws = Path(state["project_dir"]) / "workspace"
 
         async def fake_run_agent(**kwargs):
@@ -327,10 +308,10 @@ class TestStateReturn:
     """Verify the dict returned by research_node has the correct keys/values."""
 
     @pytest.mark.asyncio
-    async def test_return_keys(self, tmp_path: Path) -> None:
+    async def test_return_keys(self, tmp_path: Path, research_state, make_ui) -> None:
         """Returned dict contains exactly research_report and current_stage."""
-        state = _make_state(tmp_path)
-        ui = _make_ui()
+        state = research_state()
+        ui = make_ui()
         ws = Path(state["project_dir"]) / "workspace"
 
         async def fake_run_agent(**kwargs):
@@ -345,10 +326,10 @@ class TestStateReturn:
         assert set(result.keys()) == {"research_report", "current_stage"}
 
     @pytest.mark.asyncio
-    async def test_current_stage_is_research(self, tmp_path: Path) -> None:
+    async def test_current_stage_is_research(self, tmp_path: Path, research_state, make_ui) -> None:
         """current_stage is always 'research'."""
-        state = _make_state(tmp_path)
-        ui = _make_ui()
+        state = research_state()
+        ui = make_ui()
         ws = Path(state["project_dir"]) / "workspace"
 
         async def fake_run_agent(**kwargs):
@@ -363,10 +344,10 @@ class TestStateReturn:
         assert result["current_stage"] == "research"
 
     @pytest.mark.asyncio
-    async def test_research_report_content_matches_file(self, tmp_path: Path) -> None:
+    async def test_research_report_content_matches_file(self, tmp_path: Path, research_state, make_ui) -> None:
         """The research_report value is the exact content from the workspace file."""
-        state = _make_state(tmp_path)
-        ui = _make_ui()
+        state = research_state()
+        ui = make_ui()
         ws = Path(state["project_dir"]) / "workspace"
         expected = "# Detailed Research\n\nSome thorough analysis here.\n"
 
@@ -391,10 +372,10 @@ class TestStageLifecycle:
     """Verify ui.stage_start, mark_stage_complete, ui.stage_done are called in order."""
 
     @pytest.mark.asyncio
-    async def test_ui_stage_start_called(self, tmp_path: Path) -> None:
+    async def test_ui_stage_start_called(self, tmp_path: Path, research_state, make_ui) -> None:
         """ui.stage_start('research') is called before the agent runs."""
-        state = _make_state(tmp_path)
-        ui = _make_ui()
+        state = research_state()
+        ui = make_ui()
         ws = Path(state["project_dir"]) / "workspace"
 
         async def fake_run_agent(**kwargs):
@@ -409,10 +390,10 @@ class TestStageLifecycle:
         ui.stage_start.assert_called_once_with("research")
 
     @pytest.mark.asyncio
-    async def test_ui_stage_done_called(self, tmp_path: Path) -> None:
+    async def test_ui_stage_done_called(self, tmp_path: Path, research_state, make_ui) -> None:
         """ui.stage_done('research') is called at the end."""
-        state = _make_state(tmp_path)
-        ui = _make_ui()
+        state = research_state()
+        ui = make_ui()
         ws = Path(state["project_dir"]) / "workspace"
 
         async def fake_run_agent(**kwargs):
@@ -427,10 +408,10 @@ class TestStageLifecycle:
         ui.stage_done.assert_called_once_with("research")
 
     @pytest.mark.asyncio
-    async def test_mark_stage_complete_records_in_metadata(self, tmp_path: Path) -> None:
+    async def test_mark_stage_complete_records_in_metadata(self, tmp_path: Path, research_state, make_ui) -> None:
         """mark_stage_complete writes 'research' to metadata.json stages_completed."""
-        state = _make_state(tmp_path)
-        ui = _make_ui()
+        state = research_state()
+        ui = make_ui()
         ws = Path(state["project_dir"]) / "workspace"
 
         async def fake_run_agent(**kwargs):
@@ -447,10 +428,10 @@ class TestStageLifecycle:
         assert "research" in meta["stages_completed"]
 
     @pytest.mark.asyncio
-    async def test_lifecycle_ordering(self, tmp_path: Path) -> None:
+    async def test_lifecycle_ordering(self, tmp_path: Path, research_state, make_ui) -> None:
         """stage_start is called before stage_done, with mark_stage_complete between."""
-        state = _make_state(tmp_path)
-        ui = _make_ui()
+        state = research_state()
+        ui = make_ui()
         ws = Path(state["project_dir"]) / "workspace"
         call_order: list[str] = []
 
@@ -493,10 +474,10 @@ class TestAgentCallArgs:
     """Verify the keyword arguments passed to run_agent."""
 
     @pytest.mark.asyncio
-    async def test_agent_called_with_correct_stage(self, tmp_path: Path) -> None:
+    async def test_agent_called_with_correct_stage(self, tmp_path: Path, research_state, make_ui) -> None:
         """run_agent receives stage='research'."""
-        state = _make_state(tmp_path)
-        ui = _make_ui()
+        state = research_state()
+        ui = make_ui()
         ws = Path(state["project_dir"]) / "workspace"
 
         async def fake_run_agent(**kwargs):
@@ -512,10 +493,10 @@ class TestAgentCallArgs:
         assert call_kwargs["stage"] == "research"
 
     @pytest.mark.asyncio
-    async def test_agent_called_with_cwd_as_workspace(self, tmp_path: Path) -> None:
+    async def test_agent_called_with_cwd_as_workspace(self, tmp_path: Path, research_state, make_ui) -> None:
         """run_agent cwd is the workspace directory."""
-        state = _make_state(tmp_path)
-        ui = _make_ui()
+        state = research_state()
+        ui = make_ui()
         ws = Path(state["project_dir"]) / "workspace"
 
         async def fake_run_agent(**kwargs):
@@ -531,10 +512,10 @@ class TestAgentCallArgs:
         assert call_kwargs["cwd"] == str(ws)
 
     @pytest.mark.asyncio
-    async def test_agent_called_with_allowed_tools(self, tmp_path: Path) -> None:
+    async def test_agent_called_with_allowed_tools(self, tmp_path: Path, research_state, make_ui) -> None:
         """run_agent receives the expected allowed_tools list."""
-        state = _make_state(tmp_path)
-        ui = _make_ui()
+        state = research_state()
+        ui = make_ui()
         ws = Path(state["project_dir"]) / "workspace"
 
         async def fake_run_agent(**kwargs):
@@ -550,10 +531,10 @@ class TestAgentCallArgs:
         assert call_kwargs["allowed_tools"] == ["Read", "Write", "Bash", "Glob", "Grep"]
 
     @pytest.mark.asyncio
-    async def test_agent_called_with_max_turns(self, tmp_path: Path) -> None:
+    async def test_agent_called_with_max_turns(self, tmp_path: Path, research_state, make_ui) -> None:
         """run_agent receives max_turns=30."""
-        state = _make_state(tmp_path)
-        ui = _make_ui()
+        state = research_state()
+        ui = make_ui()
         ws = Path(state["project_dir"]) / "workspace"
 
         async def fake_run_agent(**kwargs):
@@ -569,10 +550,10 @@ class TestAgentCallArgs:
         assert call_kwargs["max_turns"] == 30
 
     @pytest.mark.asyncio
-    async def test_model_passed_through_from_state(self, tmp_path: Path) -> None:
+    async def test_model_passed_through_from_state(self, tmp_path: Path, research_state, make_ui) -> None:
         """run_agent receives model from state."""
-        state = _make_state(tmp_path, model="claude-sonnet-4-20250514")
-        ui = _make_ui()
+        state = research_state(model="claude-sonnet-4-20250514")
+        ui = make_ui()
         ws = Path(state["project_dir"]) / "workspace"
 
         async def fake_run_agent(**kwargs):
@@ -588,12 +569,12 @@ class TestAgentCallArgs:
         assert call_kwargs["model"] == "claude-sonnet-4-20250514"
 
     @pytest.mark.asyncio
-    async def test_model_none_when_absent_from_state(self, tmp_path: Path) -> None:
+    async def test_model_none_when_absent_from_state(self, tmp_path: Path, research_state, make_ui) -> None:
         """run_agent receives model=None when state has no model key."""
-        state = _make_state(tmp_path)
+        state = research_state()
         # Ensure no model key
         state.pop("model", None)
-        ui = _make_ui()
+        ui = make_ui()
         ws = Path(state["project_dir"]) / "workspace"
 
         async def fake_run_agent(**kwargs):
@@ -609,10 +590,10 @@ class TestAgentCallArgs:
         assert call_kwargs["model"] is None
 
     @pytest.mark.asyncio
-    async def test_agent_called_exactly_once(self, tmp_path: Path) -> None:
+    async def test_agent_called_exactly_once(self, tmp_path: Path, research_state, make_ui) -> None:
         """run_agent is invoked exactly once per research_node call."""
-        state = _make_state(tmp_path)
-        ui = _make_ui()
+        state = research_state()
+        ui = make_ui()
         ws = Path(state["project_dir"]) / "workspace"
 
         async def fake_run_agent(**kwargs):
