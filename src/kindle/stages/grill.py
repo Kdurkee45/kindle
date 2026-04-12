@@ -9,6 +9,7 @@ In auto-approve mode, all recommended answers are used automatically.
 from __future__ import annotations
 
 import json
+
 from kindle.agent import run_agent
 from kindle.artifacts import mark_stage_complete, save_artifact, workspace_path
 from kindle.state import KindleState
@@ -148,11 +149,7 @@ async def grill_node(state: KindleState, ui: UI) -> dict:
 
     for i, q in enumerate(open_questions, 1):
         question = q.get("question", str(q)) if isinstance(q, dict) else str(q)
-        recommended = (
-            q.get("recommended_answer", "No recommendation")
-            if isinstance(q, dict)
-            else "No recommendation"
-        )
+        recommended = q.get("recommended_answer", "No recommendation") if isinstance(q, dict) else "No recommendation"
         category = q.get("category", "general") if isinstance(q, dict) else "general"
 
         answer = ui.grill_question(question, recommended, category, i)
@@ -181,9 +178,7 @@ async def grill_node(state: KindleState, ui: UI) -> dict:
                 transcript_lines.append(f"  Recommended: {rr}")
                 transcript_lines.append(f"  Answer: {rr} (auto-default)")
                 transcript_lines.append("")
-                decisions.append(
-                    {"question": rq, "recommended": rr, "answer": rr, "category": rc}
-                )
+                decisions.append({"question": rq, "recommended": rr, "answer": rr, "category": rc})
             break
 
         transcript_lines.append(f"Q{i} [{category}]: {question}")
@@ -191,9 +186,7 @@ async def grill_node(state: KindleState, ui: UI) -> dict:
         transcript_lines.append(f"  Answer: {answer}")
         transcript_lines.append("")
 
-        decisions.append(
-            {"question": question, "recommended": recommended, "answer": answer, "category": category}
-        )
+        decisions.append({"question": question, "recommended": recommended, "answer": answer, "category": category})
 
     grill_transcript = "\n".join(transcript_lines)
     save_artifact(project_dir, "grill_transcript.md", grill_transcript)
