@@ -1,4 +1,4 @@
-"""Tests for kindle.stages.grill — structured interrogation to build a feature spec."""
+"""Tests for kindle.stages.grill — adaptive conversational interrogation."""
 
 from __future__ import annotations
 
@@ -8,8 +8,11 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from kindle.stages.grill import grill_node
-from tests.constants import SAMPLE_QUESTIONS
+from kindle.stages.grill import (
+    _build_history_prompt,
+    _parse_agent_response,
+    grill_node,
+)
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -28,6 +31,80 @@ GRILL_FEATURE_SPEC = {
     "platform": "web",
 }
 
+# Standard question responses the mock agent returns
+QUESTION_RESPONSES = [
+    {
+        "status": "question",
+        "question": "What are the must-have features for the MVP?",
+        "category": "core_functionality",
+        "recommended_answer": "User login, dashboard, and CRUD for tasks",
+        "why_asking": "Need to scope the core build",
+    },
+    {
+        "status": "question",
+        "question": "Is authentication required?",
+        "category": "user_model",
+        "recommended_answer": "Yes, email/password auth",
+        "why_asking": "Determines user model complexity",
+    },
+    {
+        "status": "question",
+        "question": "What is the target platform?",
+        "category": "platform",
+        "recommended_answer": "Web application (SPA)",
+        "why_asking": "Affects tech stack decisions",
+    },
+]
+
+DONE_RESPONSE = {
+    "status": "done",
+    "summary": "Building a task management web app with auth and CRUD",
+    "assumptions": ["Email/password auth", "PostgreSQL database"],
+    "confidence": "high",
+}
+
+
+def _make_agent_result(response: dict) -> MagicMock:
+    """Create a MagicMock that mimics an agent result with a .text attribute."""
+    result = MagicMock()
+    result.text = json.dumps(response)
+    return result
+
+
+def _make_conversation_side_effect(
+    questions: list[dict],
+    done: dict,
+    feature_spec: dict | None = None,
+    ws: Path | None = None,
+):
+    """Build a side_effect function for run_agent that simulates a conversation.
+
+    Returns question responses for the first N calls, then a done response,
+    then handles the compile call by writing feature_spec.json.
+    """
+    call_count = 0
+    total_questions = len(questions)
+
+    async def side_effect(**kwargs):
+        nonlocal call_count
+        idx = call_count
+        call_count += 1
+
+        # Conversation turns: questions, then done
+        if idx < total_questions:
+            return _make_agent_result(questions[idx])
+        if idx == total_questions:
+            return _make_agent_result(done)
+
+        # Compile phase — write feature_spec.json
+        if ws is not None:
+            ws.mkdir(parents=True, exist_ok=True)
+            spec = feature_spec if feature_spec is not None else {}
+            (ws / "feature_spec.json").write_text(json.dumps(spec))
+        return MagicMock()
+
+    return side_effect
+
 
 @pytest.fixture
 def grill_state(make_state):
@@ -42,76 +119,117 @@ def grill_state(make_state):
 
 
 # ---------------------------------------------------------------------------
-# Question generation phase
+# _parse_agent_response unit tests
 # ---------------------------------------------------------------------------
 
 
-class TestQuestionGeneration:
-    """Tests for the first phase — generating open_questions.json via the agent."""
+class TestParseAgentResponse:
+    """Tests for the JSON extraction helper."""
+
+    def test_parses_clean_json(self) -> None:
+        result = _parse_agent_response('{"status": "done", "summary": "ok"}')
+        assert result["status"] == "done"
+
+    def test_parses_json_in_code_fence(self) -> None:
+        text = '```json\n{"status": "question", "question": "What?"}\n```'
+        result = _parse_agent_response(text)
+        assert result["status"] == "question"
+
+    def test_parses_json_with_preamble(self) -> None:
+        text = 'Here is my response:\n{"status": "done", "summary": "all good"}'
+        result = _parse_agent_response(text)
+        assert result["status"] == "done"
+
+    def test_returns_error_for_garbage(self) -> None:
+        result = _parse_agent_response("not json at all")
+        assert result["status"] == "error"
+
+    def test_handles_whitespace(self) -> None:
+        result = _parse_agent_response('  \n  {"status": "done"}  \n  ')
+        assert result["status"] == "done"
+
+
+# ---------------------------------------------------------------------------
+# _build_history_prompt unit tests
+# ---------------------------------------------------------------------------
+
+
+class TestBuildHistoryPrompt:
+    """Tests for conversation prompt construction."""
+
+    def test_includes_idea(self) -> None:
+        prompt = _build_history_prompt("a todo app", "", [])
+        assert "a todo app" in prompt
+
+    def test_includes_stack_preference(self) -> None:
+        prompt = _build_history_prompt("app", "Python + React", [])
+        assert "Python + React" in prompt
+
+    def test_omits_stack_when_empty(self) -> None:
+        prompt = _build_history_prompt("app", "", [])
+        assert "STACK PREFERENCE" not in prompt
+
+    def test_includes_history(self) -> None:
+        history = [
+            {
+                "role": "agent",
+                "data": {
+                    "question": "What features?",
+                    "category": "core",
+                    "recommended_answer": "CRUD",
+                    "why_asking": "Need scope",
+                },
+                "turn": 1,
+            },
+            {"role": "user", "answer": "Just CRUD and auth"},
+        ]
+        prompt = _build_history_prompt("app", "", history)
+        assert "What features?" in prompt
+        assert "Just CRUD and auth" in prompt
+
+
+# ---------------------------------------------------------------------------
+# Conversation loop — agent question flow
+# ---------------------------------------------------------------------------
+
+
+class TestConversationLoop:
+    """Tests for the adaptive conversation loop in grill_node."""
 
     @pytest.mark.asyncio
-    async def test_agent_called_with_idea(self, tmp_path: Path, grill_state, make_ui) -> None:
-        """run_agent receives a prompt containing the user's idea."""
+    async def test_agent_called_with_idea_in_prompt(
+        self, tmp_path: Path, grill_state, make_ui
+    ) -> None:
+        """The first run_agent call receives the user's idea in the prompt."""
         state = grill_state()
         ui = make_ui()
+        ui.grill_question.return_value = "accepted"
         ws = Path(state["project_dir"]) / "workspace"
 
-        async def fake_gen_agent(**kwargs):
-            # Write empty questions so the rest of the node proceeds
-            ws.mkdir(parents=True, exist_ok=True)
-            (ws / "open_questions.json").write_text("[]")
-            return MagicMock()
-
-        async def fake_compile_agent(**kwargs):
-            (ws / "feature_spec.json").write_text("{}")
-            return MagicMock()
-
-        with patch("kindle.stages.grill.run_agent", new=AsyncMock(side_effect=[fake_gen_agent, fake_compile_agent])):
-            # run_agent is called, but side_effect returns coroutines
-            # We need run_agent to be awaitable, so fix approach
-            pass
-
-        # Re-approach: use a single AsyncMock with side_effect list
-        call_count = 0
-
-        async def fake_run_agent(**kwargs):
-            nonlocal call_count
-            ws.mkdir(parents=True, exist_ok=True)
-            if call_count == 0:
-                (ws / "open_questions.json").write_text("[]")
-            else:
-                (ws / "feature_spec.json").write_text("{}")
-            call_count += 1
-            return MagicMock()
-
-        mock_agent = AsyncMock(side_effect=fake_run_agent)
+        side_effect = _make_conversation_side_effect(
+            QUESTION_RESPONSES[:1], DONE_RESPONSE, {}, ws
+        )
+        mock_agent = AsyncMock(side_effect=side_effect)
         with patch("kindle.stages.grill.run_agent", mock_agent):
             await grill_node(state, ui)
 
-        # First call is question generation
         first_call_kwargs = mock_agent.call_args_list[0].kwargs
         assert "a task management app" in first_call_kwargs["user_prompt"]
-        assert first_call_kwargs["stage"] == "grill"
 
     @pytest.mark.asyncio
-    async def test_agent_prompt_includes_stack_preference(self, tmp_path: Path, grill_state, make_ui) -> None:
-        """When stack_preference is set, it appears in the generation prompt."""
+    async def test_agent_prompt_includes_stack_preference(
+        self, tmp_path: Path, grill_state, make_ui
+    ) -> None:
+        """When stack_preference is set, it appears in the conversation prompt."""
         state = grill_state(stack_preference="Python + React")
         ui = make_ui()
+        ui.grill_question.return_value = "ok"
         ws = Path(state["project_dir"]) / "workspace"
 
-        call_count = 0
-
-        async def fake_run_agent(**kwargs):
-            nonlocal call_count
-            ws.mkdir(parents=True, exist_ok=True)
-            if call_count == 0:
-                (ws / "open_questions.json").write_text("[]")
-            else:
-                (ws / "feature_spec.json").write_text("{}")
-            call_count += 1
-
-        mock_agent = AsyncMock(side_effect=fake_run_agent)
+        side_effect = _make_conversation_side_effect(
+            QUESTION_RESPONSES[:1], DONE_RESPONSE, {}, ws
+        )
+        mock_agent = AsyncMock(side_effect=side_effect)
         with patch("kindle.stages.grill.run_agent", mock_agent):
             await grill_node(state, ui)
 
@@ -119,235 +237,427 @@ class TestQuestionGeneration:
         assert "Python + React" in first_call_kwargs["user_prompt"]
 
     @pytest.mark.asyncio
-    async def test_questions_loaded_from_json(self, tmp_path: Path, grill_state, make_ui) -> None:
-        """Questions generated by agent are loaded and presented to user."""
+    async def test_questions_presented_to_user(
+        self, tmp_path: Path, grill_state, make_ui
+    ) -> None:
+        """Each question from the agent is presented via ui.grill_question."""
         state = grill_state()
         ui = make_ui()
         ui.grill_question.return_value = "accepted"
         ws = Path(state["project_dir"]) / "workspace"
 
-        call_count = 0
-
-        async def fake_run_agent(**kwargs):
-            nonlocal call_count
-            ws.mkdir(parents=True, exist_ok=True)
-            if call_count == 0:
-                (ws / "open_questions.json").write_text(json.dumps(SAMPLE_QUESTIONS))
-            else:
-                (ws / "feature_spec.json").write_text(json.dumps(GRILL_FEATURE_SPEC))
-            call_count += 1
-
-        mock_agent = AsyncMock(side_effect=fake_run_agent)
+        side_effect = _make_conversation_side_effect(
+            QUESTION_RESPONSES, DONE_RESPONSE, GRILL_FEATURE_SPEC, ws
+        )
+        mock_agent = AsyncMock(side_effect=side_effect)
         with patch("kindle.stages.grill.run_agent", mock_agent):
             await grill_node(state, ui)
 
-        # Each question should be presented exactly once
-        assert ui.grill_question.call_count == len(SAMPLE_QUESTIONS)
+        assert ui.grill_question.call_count == len(QUESTION_RESPONSES)
 
     @pytest.mark.asyncio
-    async def test_no_questions_file_skips_grill(self, tmp_path: Path, grill_state, make_ui) -> None:
-        """If the agent fails to create open_questions.json, proceed gracefully."""
-        state = grill_state()
-        ui = make_ui()
-        ws = Path(state["project_dir"]) / "workspace"
-
-        call_count = 0
-
-        async def fake_run_agent(**kwargs):
-            nonlocal call_count
-            ws.mkdir(parents=True, exist_ok=True)
-            if call_count == 0:
-                pass  # Don't create open_questions.json
-            else:
-                (ws / "feature_spec.json").write_text("{}")
-            call_count += 1
-
-        mock_agent = AsyncMock(side_effect=fake_run_agent)
-        with patch("kindle.stages.grill.run_agent", mock_agent):
-            result = await grill_node(state, ui)
-
-        ui.info.assert_any_call("No questions generated — proceeding with idea as-is.")
-        ui.grill_question.assert_not_called()
-        assert result["grill_transcript"] == ""
-
-    @pytest.mark.asyncio
-    async def test_malformed_json_shows_error(self, tmp_path: Path, grill_state, make_ui) -> None:
-        """Invalid JSON in open_questions.json triggers error and empty question list."""
-        state = grill_state()
-        ui = make_ui()
-        ws = Path(state["project_dir"]) / "workspace"
-
-        call_count = 0
-
-        async def fake_run_agent(**kwargs):
-            nonlocal call_count
-            ws.mkdir(parents=True, exist_ok=True)
-            if call_count == 0:
-                (ws / "open_questions.json").write_text("{not valid json!!")
-            else:
-                (ws / "feature_spec.json").write_text("{}")
-            call_count += 1
-
-        mock_agent = AsyncMock(side_effect=fake_run_agent)
-        with patch("kindle.stages.grill.run_agent", mock_agent):
-            result = await grill_node(state, ui)
-
-        ui.error.assert_any_call("Failed to parse open_questions.json")
-        ui.grill_question.assert_not_called()
-
-    @pytest.mark.asyncio
-    async def test_non_list_json_treated_as_empty(self, tmp_path: Path, grill_state, make_ui) -> None:
-        """If open_questions.json contains a dict instead of a list, treat as empty."""
-        state = grill_state()
-        ui = make_ui()
-        ws = Path(state["project_dir"]) / "workspace"
-
-        call_count = 0
-
-        async def fake_run_agent(**kwargs):
-            nonlocal call_count
-            ws.mkdir(parents=True, exist_ok=True)
-            if call_count == 0:
-                (ws / "open_questions.json").write_text('{"not": "a list"}')
-            else:
-                (ws / "feature_spec.json").write_text("{}")
-            call_count += 1
-
-        mock_agent = AsyncMock(side_effect=fake_run_agent)
-        with patch("kindle.stages.grill.run_agent", mock_agent):
-            result = await grill_node(state, ui)
-
-        ui.info.assert_any_call("No questions generated — proceeding with idea as-is.")
-        ui.grill_question.assert_not_called()
-
-
-# ---------------------------------------------------------------------------
-# Question walk-through
-# ---------------------------------------------------------------------------
-
-
-class TestQuestionWalkThrough:
-    """Tests for the interactive Q&A loop that builds the transcript."""
-
-    @pytest.mark.asyncio
-    async def test_transcript_records_all_answers(self, tmp_path: Path, grill_state, make_ui) -> None:
-        """Every Q&A pair is captured in the transcript with correct formatting."""
-        state = grill_state()
-        ui = make_ui()
-        ui.grill_question.side_effect = ["my custom answer", "another answer", "third answer"]
-        ws = Path(state["project_dir"]) / "workspace"
-
-        call_count = 0
-
-        async def fake_run_agent(**kwargs):
-            nonlocal call_count
-            ws.mkdir(parents=True, exist_ok=True)
-            if call_count == 0:
-                (ws / "open_questions.json").write_text(json.dumps(SAMPLE_QUESTIONS))
-            else:
-                (ws / "feature_spec.json").write_text(json.dumps(GRILL_FEATURE_SPEC))
-            call_count += 1
-
-        mock_agent = AsyncMock(side_effect=fake_run_agent)
-        with patch("kindle.stages.grill.run_agent", mock_agent):
-            result = await grill_node(state, ui)
-
-        transcript = result["grill_transcript"]
-        # Verify each question and answer appears
-        assert "Q1 [core_functionality]:" in transcript
-        assert "my custom answer" in transcript
-        assert "Q2 [user_model]:" in transcript
-        assert "another answer" in transcript
-        assert "Q3 [platform]:" in transcript
-        assert "third answer" in transcript
-
-    @pytest.mark.asyncio
-    async def test_grill_question_called_with_correct_args(self, tmp_path: Path, grill_state, make_ui) -> None:
-        """grill_question receives question text, recommended answer, category, and number."""
+    async def test_grill_question_called_with_correct_kwargs(
+        self, tmp_path: Path, grill_state, make_ui
+    ) -> None:
+        """grill_question receives question, recommended, category, number, and why_asking."""
         state = grill_state()
         ui = make_ui()
         ui.grill_question.return_value = "ok"
         ws = Path(state["project_dir"]) / "workspace"
 
-        call_count = 0
-
-        async def fake_run_agent(**kwargs):
-            nonlocal call_count
-            ws.mkdir(parents=True, exist_ok=True)
-            if call_count == 0:
-                (ws / "open_questions.json").write_text(json.dumps(SAMPLE_QUESTIONS[:1]))
-            else:
-                (ws / "feature_spec.json").write_text("{}")
-            call_count += 1
-
-        mock_agent = AsyncMock(side_effect=fake_run_agent)
+        side_effect = _make_conversation_side_effect(
+            QUESTION_RESPONSES[:1], DONE_RESPONSE, {}, ws
+        )
+        mock_agent = AsyncMock(side_effect=side_effect)
         with patch("kindle.stages.grill.run_agent", mock_agent):
             await grill_node(state, ui)
 
+        q = QUESTION_RESPONSES[0]
         ui.grill_question.assert_called_once_with(
-            "What are the must-have features for the MVP?",
-            "User login, dashboard, and CRUD for tasks",
-            "core_functionality",
-            1,
+            question=q["question"],
+            recommended=q["recommended_answer"],
+            category=q["category"],
+            number=1,
+            why_asking=q["why_asking"],
         )
 
     @pytest.mark.asyncio
-    async def test_transcript_includes_recommended_answers(self, tmp_path: Path, grill_state, make_ui) -> None:
-        """The transcript records both the recommended answer and the actual answer."""
+    async def test_agent_stops_on_done_status(
+        self, tmp_path: Path, grill_state, make_ui
+    ) -> None:
+        """When agent returns status=done, no more questions are asked."""
+        state = grill_state()
+        ui = make_ui()
+        ui.grill_question.return_value = "yes"
+        ws = Path(state["project_dir"]) / "workspace"
+
+        # 2 questions then done
+        side_effect = _make_conversation_side_effect(
+            QUESTION_RESPONSES[:2], DONE_RESPONSE, {}, ws
+        )
+        mock_agent = AsyncMock(side_effect=side_effect)
+        with patch("kindle.stages.grill.run_agent", mock_agent):
+            await grill_node(state, ui)
+
+        assert ui.grill_question.call_count == 2
+
+    @pytest.mark.asyncio
+    async def test_error_response_breaks_loop(
+        self, tmp_path: Path, grill_state, make_ui
+    ) -> None:
+        """If agent returns unparseable response, loop exits gracefully."""
+        state = grill_state()
+        ui = make_ui()
+        ws = Path(state["project_dir"]) / "workspace"
+
+        call_count = 0
+
+        async def side_effect(**kwargs):
+            nonlocal call_count
+            idx = call_count
+            call_count += 1
+            if idx == 0:
+                result = MagicMock()
+                result.text = "totally not json {{{{"
+                return result
+            # compile call
+            ws.mkdir(parents=True, exist_ok=True)
+            (ws / "feature_spec.json").write_text("{}")
+            return MagicMock()
+
+        mock_agent = AsyncMock(side_effect=side_effect)
+        with patch("kindle.stages.grill.run_agent", mock_agent):
+            result = await grill_node(state, ui)
+
+        ui.error.assert_any_call(
+            "Grill agent returned unparseable response on turn 1. Wrapping up."
+        )
+        ui.grill_question.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_empty_question_breaks_loop(
+        self, tmp_path: Path, grill_state, make_ui
+    ) -> None:
+        """If agent returns a question with empty text, loop exits."""
+        state = grill_state()
+        ui = make_ui()
+        ws = Path(state["project_dir"]) / "workspace"
+
+        empty_q = {
+            "status": "question",
+            "question": "",
+            "category": "general",
+            "recommended_answer": "something",
+            "why_asking": "",
+        }
+
+        call_count = 0
+
+        async def side_effect(**kwargs):
+            nonlocal call_count
+            idx = call_count
+            call_count += 1
+            if idx == 0:
+                return _make_agent_result(empty_q)
+            ws.mkdir(parents=True, exist_ok=True)
+            (ws / "feature_spec.json").write_text("{}")
+            return MagicMock()
+
+        mock_agent = AsyncMock(side_effect=side_effect)
+        with patch("kindle.stages.grill.run_agent", mock_agent):
+            await grill_node(state, ui)
+
+        ui.error.assert_any_call(
+            "Grill agent returned empty question on turn 1. Wrapping up."
+        )
+        ui.grill_question.assert_not_called()
+
+
+# ---------------------------------------------------------------------------
+# Transcript recording
+# ---------------------------------------------------------------------------
+
+
+class TestTranscriptRecording:
+    """Tests for the grill transcript output."""
+
+    @pytest.mark.asyncio
+    async def test_transcript_records_all_answers(
+        self, tmp_path: Path, grill_state, make_ui
+    ) -> None:
+        """Every Q&A pair is captured in the transcript."""
+        state = grill_state()
+        ui = make_ui()
+        ui.grill_question.side_effect = [
+            "my custom answer",
+            "another answer",
+            "third answer",
+        ]
+        ws = Path(state["project_dir"]) / "workspace"
+
+        side_effect = _make_conversation_side_effect(
+            QUESTION_RESPONSES, DONE_RESPONSE, GRILL_FEATURE_SPEC, ws
+        )
+        mock_agent = AsyncMock(side_effect=side_effect)
+        with patch("kindle.stages.grill.run_agent", mock_agent):
+            result = await grill_node(state, ui)
+
+        transcript = result["grill_transcript"]
+        assert "Q1 [core_functionality]" in transcript
+        assert "my custom answer" in transcript
+        assert "Q2 [user_model]" in transcript
+        assert "another answer" in transcript
+        assert "Q3 [platform]" in transcript
+        assert "third answer" in transcript
+
+    @pytest.mark.asyncio
+    async def test_transcript_includes_recommended_answers(
+        self, tmp_path: Path, grill_state, make_ui
+    ) -> None:
+        """The transcript records the recommended answer for each question."""
         state = grill_state()
         ui = make_ui()
         ui.grill_question.return_value = "custom answer"
         ws = Path(state["project_dir"]) / "workspace"
 
-        call_count = 0
-
-        async def fake_run_agent(**kwargs):
-            nonlocal call_count
-            ws.mkdir(parents=True, exist_ok=True)
-            if call_count == 0:
-                (ws / "open_questions.json").write_text(json.dumps(SAMPLE_QUESTIONS[:1]))
-            else:
-                (ws / "feature_spec.json").write_text("{}")
-            call_count += 1
-
-        mock_agent = AsyncMock(side_effect=fake_run_agent)
+        side_effect = _make_conversation_side_effect(
+            QUESTION_RESPONSES[:1], DONE_RESPONSE, {}, ws
+        )
+        mock_agent = AsyncMock(side_effect=side_effect)
         with patch("kindle.stages.grill.run_agent", mock_agent):
             result = await grill_node(state, ui)
 
         transcript = result["grill_transcript"]
         assert "Recommended: User login, dashboard, and CRUD for tasks" in transcript
-        assert "Answer: custom answer" in transcript
+        assert "Answer:** custom answer" in transcript
 
     @pytest.mark.asyncio
-    async def test_decisions_list_passed_to_compile(self, tmp_path: Path, grill_state, make_ui) -> None:
-        """The compile prompt includes the full grill transcript."""
+    async def test_transcript_includes_why_asking(
+        self, tmp_path: Path, grill_state, make_ui
+    ) -> None:
+        """The transcript records why the agent asked each question."""
+        state = grill_state()
+        ui = make_ui()
+        ui.grill_question.return_value = "ok"
+        ws = Path(state["project_dir"]) / "workspace"
+
+        side_effect = _make_conversation_side_effect(
+            QUESTION_RESPONSES[:1], DONE_RESPONSE, {}, ws
+        )
+        mock_agent = AsyncMock(side_effect=side_effect)
+        with patch("kindle.stages.grill.run_agent", mock_agent):
+            result = await grill_node(state, ui)
+
+        transcript = result["grill_transcript"]
+        assert "Need to scope the core build" in transcript
+
+    @pytest.mark.asyncio
+    async def test_transcript_records_done_summary(
+        self, tmp_path: Path, grill_state, make_ui
+    ) -> None:
+        """When agent says done, the summary and confidence are recorded."""
+        state = grill_state()
+        ui = make_ui()
+        ui.grill_question.return_value = "ok"
+        ws = Path(state["project_dir"]) / "workspace"
+
+        side_effect = _make_conversation_side_effect(
+            QUESTION_RESPONSES[:1], DONE_RESPONSE, {}, ws
+        )
+        mock_agent = AsyncMock(side_effect=side_effect)
+        with patch("kindle.stages.grill.run_agent", mock_agent):
+            result = await grill_node(state, ui)
+
+        transcript = result["grill_transcript"]
+        assert "Agent concluded after 1 questions" in transcript
+        assert DONE_RESPONSE["summary"] in transcript
+        assert "high" in transcript
+
+    @pytest.mark.asyncio
+    async def test_transcript_records_done_assumptions(
+        self, tmp_path: Path, grill_state, make_ui
+    ) -> None:
+        """Done assumptions appear in the transcript."""
+        state = grill_state()
+        ui = make_ui()
+        ui.grill_question.return_value = "ok"
+        ws = Path(state["project_dir"]) / "workspace"
+
+        side_effect = _make_conversation_side_effect(
+            QUESTION_RESPONSES[:1], DONE_RESPONSE, {}, ws
+        )
+        mock_agent = AsyncMock(side_effect=side_effect)
+        with patch("kindle.stages.grill.run_agent", mock_agent):
+            result = await grill_node(state, ui)
+
+        transcript = result["grill_transcript"]
+        for assumption in DONE_RESPONSE["assumptions"]:
+            assert assumption in transcript
+
+
+# ---------------------------------------------------------------------------
+# Compile phase
+# ---------------------------------------------------------------------------
+
+
+class TestCompilePhase:
+    """Tests for the compilation of decisions into feature_spec.json."""
+
+    @pytest.mark.asyncio
+    async def test_compile_prompt_includes_transcript(
+        self, tmp_path: Path, grill_state, make_ui
+    ) -> None:
+        """The compile agent call includes the full conversation transcript."""
         state = grill_state()
         ui = make_ui()
         ui.grill_question.side_effect = ["answer1", "answer2", "answer3"]
         ws = Path(state["project_dir"]) / "workspace"
 
-        call_count = 0
-
-        async def fake_run_agent(**kwargs):
-            nonlocal call_count
-            ws.mkdir(parents=True, exist_ok=True)
-            if call_count == 0:
-                (ws / "open_questions.json").write_text(json.dumps(SAMPLE_QUESTIONS))
-            else:
-                (ws / "feature_spec.json").write_text(json.dumps(GRILL_FEATURE_SPEC))
-            call_count += 1
-
-        mock_agent = AsyncMock(side_effect=fake_run_agent)
+        side_effect = _make_conversation_side_effect(
+            QUESTION_RESPONSES, DONE_RESPONSE, GRILL_FEATURE_SPEC, ws
+        )
+        mock_agent = AsyncMock(side_effect=side_effect)
         with patch("kindle.stages.grill.run_agent", mock_agent):
             await grill_node(state, ui)
 
-        # Second call is the compile phase
-        compile_kwargs = mock_agent.call_args_list[1].kwargs
-        assert "GRILL TRANSCRIPT:" in compile_kwargs["user_prompt"]
+        # Last call is the compile phase
+        compile_kwargs = mock_agent.call_args_list[-1].kwargs
+        assert "CONVERSATION TRANSCRIPT" in compile_kwargs["user_prompt"]
         assert "answer1" in compile_kwargs["user_prompt"]
-        assert "answer2" in compile_kwargs["user_prompt"]
-        assert "answer3" in compile_kwargs["user_prompt"]
         assert compile_kwargs["stage"] == "grill_compile"
+
+    @pytest.mark.asyncio
+    async def test_compile_prompt_includes_idea_and_stack(
+        self, tmp_path: Path, grill_state, make_ui
+    ) -> None:
+        """The compilation prompt includes the idea and stack preference."""
+        state = grill_state(stack_preference="Django + Vue")
+        ui = make_ui()
+        ui.grill_question.return_value = "ok"
+        ws = Path(state["project_dir"]) / "workspace"
+
+        side_effect = _make_conversation_side_effect(
+            QUESTION_RESPONSES[:1], DONE_RESPONSE, {}, ws
+        )
+        mock_agent = AsyncMock(side_effect=side_effect)
+        with patch("kindle.stages.grill.run_agent", mock_agent):
+            await grill_node(state, ui)
+
+        compile_kwargs = mock_agent.call_args_list[-1].kwargs
+        assert "a task management app" in compile_kwargs["user_prompt"]
+        assert "Django + Vue" in compile_kwargs["user_prompt"]
+
+    @pytest.mark.asyncio
+    async def test_feature_spec_parsed_and_returned(
+        self, tmp_path: Path, grill_state, make_ui
+    ) -> None:
+        """Feature spec JSON is parsed and returned in state."""
+        state = grill_state()
+        ui = make_ui()
+        ui.grill_question.return_value = "accepted"
+        ws = Path(state["project_dir"]) / "workspace"
+
+        side_effect = _make_conversation_side_effect(
+            QUESTION_RESPONSES[:1], DONE_RESPONSE, GRILL_FEATURE_SPEC, ws
+        )
+        mock_agent = AsyncMock(side_effect=side_effect)
+        with patch("kindle.stages.grill.run_agent", mock_agent):
+            result = await grill_node(state, ui)
+
+        assert result["feature_spec"] == GRILL_FEATURE_SPEC
+        assert result["feature_spec"]["app_name"] == "TaskFlow"
+        assert "task CRUD" in result["feature_spec"]["core_features"]
+
+    @pytest.mark.asyncio
+    async def test_malformed_feature_spec_returns_empty_dict(
+        self, tmp_path: Path, grill_state, make_ui
+    ) -> None:
+        """If feature_spec.json is invalid JSON, return an empty dict."""
+        state = grill_state()
+        ui = make_ui()
+        ws = Path(state["project_dir"]) / "workspace"
+
+        call_count = 0
+
+        async def side_effect(**kwargs):
+            nonlocal call_count
+            idx = call_count
+            call_count += 1
+            if idx == 0:
+                return _make_agent_result(DONE_RESPONSE)
+            # Compile — write broken JSON
+            ws.mkdir(parents=True, exist_ok=True)
+            (ws / "feature_spec.json").write_text("{{broken json}}")
+            return MagicMock()
+
+        mock_agent = AsyncMock(side_effect=side_effect)
+        with patch("kindle.stages.grill.run_agent", mock_agent):
+            result = await grill_node(state, ui)
+
+        ui.error.assert_any_call("Failed to parse feature_spec.json.")
+        assert result["feature_spec"] == {}
+
+    @pytest.mark.asyncio
+    async def test_missing_feature_spec_returns_empty_dict(
+        self, tmp_path: Path, grill_state, make_ui
+    ) -> None:
+        """If agent fails to create feature_spec.json, return an empty dict."""
+        state = grill_state()
+        ui = make_ui()
+        ws = Path(state["project_dir"]) / "workspace"
+
+        call_count = 0
+
+        async def side_effect(**kwargs):
+            nonlocal call_count
+            idx = call_count
+            call_count += 1
+            if idx == 0:
+                return _make_agent_result(DONE_RESPONSE)
+            # Compile — don't write anything
+            ws.mkdir(parents=True, exist_ok=True)
+            return MagicMock()
+
+        mock_agent = AsyncMock(side_effect=side_effect)
+        with patch("kindle.stages.grill.run_agent", mock_agent):
+            result = await grill_node(state, ui)
+
+        assert result["feature_spec"] == {}
+
+    @pytest.mark.asyncio
+    async def test_no_stack_preference_shows_choose_best_fit(
+        self, tmp_path: Path, grill_state, make_ui
+    ) -> None:
+        """When stack_preference is empty, compile prompt says 'choose the best fit'."""
+        state = grill_state(stack_preference="")
+        ui = make_ui()
+        ws = Path(state["project_dir"]) / "workspace"
+
+        side_effect = _make_conversation_side_effect([], DONE_RESPONSE, {}, ws)
+        mock_agent = AsyncMock(side_effect=side_effect)
+        with patch("kindle.stages.grill.run_agent", mock_agent):
+            await grill_node(state, ui)
+
+        compile_kwargs = mock_agent.call_args_list[-1].kwargs
+        assert "None — choose the best fit" in compile_kwargs["user_prompt"]
+
+    @pytest.mark.asyncio
+    async def test_compile_info_message_shown(
+        self, tmp_path: Path, grill_state, make_ui
+    ) -> None:
+        """User sees an info message about spec compilation."""
+        state = grill_state()
+        ui = make_ui()
+        ws = Path(state["project_dir"]) / "workspace"
+
+        side_effect = _make_conversation_side_effect([], DONE_RESPONSE, {}, ws)
+        mock_agent = AsyncMock(side_effect=side_effect)
+        with patch("kindle.stages.grill.run_agent", mock_agent):
+            await grill_node(state, ui)
+
+        ui.info.assert_any_call(
+            "Compiling feature specification from conversation..."
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -359,58 +669,46 @@ class TestAutoApprove:
     """When auto_approve is True, recommended answers are used without prompting."""
 
     @pytest.mark.asyncio
-    async def test_auto_approve_uses_recommended_answers(self, tmp_path: Path, grill_state, make_ui) -> None:
+    async def test_auto_approve_uses_recommended_answers(
+        self, tmp_path: Path, grill_state, make_ui
+    ) -> None:
         """In auto-approve, UI.grill_question still gets called (UI returns recommended)."""
         state = grill_state()
         ui = make_ui(auto_approve=True)
         # Simulate the real UI behavior: auto_approve returns the recommended answer
-        ui.grill_question.side_effect = lambda q, rec, cat, num: rec
+        ui.grill_question.side_effect = lambda **kwargs: kwargs["recommended"]
         ws = Path(state["project_dir"]) / "workspace"
 
-        call_count = 0
-
-        async def fake_run_agent(**kwargs):
-            nonlocal call_count
-            ws.mkdir(parents=True, exist_ok=True)
-            if call_count == 0:
-                (ws / "open_questions.json").write_text(json.dumps(SAMPLE_QUESTIONS))
-            else:
-                (ws / "feature_spec.json").write_text(json.dumps(GRILL_FEATURE_SPEC))
-            call_count += 1
-
-        mock_agent = AsyncMock(side_effect=fake_run_agent)
+        side_effect = _make_conversation_side_effect(
+            QUESTION_RESPONSES, DONE_RESPONSE, GRILL_FEATURE_SPEC, ws
+        )
+        mock_agent = AsyncMock(side_effect=side_effect)
         with patch("kindle.stages.grill.run_agent", mock_agent):
             result = await grill_node(state, ui)
 
         transcript = result["grill_transcript"]
         # All recommended answers should be in the transcript
-        for q in SAMPLE_QUESTIONS:
-            assert f"Answer: {q['recommended_answer']}" in transcript
+        for q in QUESTION_RESPONSES:
+            assert f"Answer:** {q['recommended_answer']}" in transcript
 
     @pytest.mark.asyncio
-    async def test_auto_approve_all_questions_answered(self, tmp_path: Path, grill_state, make_ui) -> None:
+    async def test_auto_approve_all_questions_answered(
+        self, tmp_path: Path, grill_state, make_ui
+    ) -> None:
         """All questions should be answered when in auto-approve mode."""
         state = grill_state()
         ui = make_ui(auto_approve=True)
-        ui.grill_question.side_effect = lambda q, rec, cat, num: rec
+        ui.grill_question.side_effect = lambda **kwargs: kwargs["recommended"]
         ws = Path(state["project_dir"]) / "workspace"
 
-        call_count = 0
-
-        async def fake_run_agent(**kwargs):
-            nonlocal call_count
-            ws.mkdir(parents=True, exist_ok=True)
-            if call_count == 0:
-                (ws / "open_questions.json").write_text(json.dumps(SAMPLE_QUESTIONS))
-            else:
-                (ws / "feature_spec.json").write_text("{}")
-            call_count += 1
-
-        mock_agent = AsyncMock(side_effect=fake_run_agent)
+        side_effect = _make_conversation_side_effect(
+            QUESTION_RESPONSES, DONE_RESPONSE, {}, ws
+        )
+        mock_agent = AsyncMock(side_effect=side_effect)
         with patch("kindle.stages.grill.run_agent", mock_agent):
             await grill_node(state, ui)
 
-        assert ui.grill_question.call_count == len(SAMPLE_QUESTIONS)
+        assert ui.grill_question.call_count == len(QUESTION_RESPONSES)
 
 
 # ---------------------------------------------------------------------------
@@ -419,72 +717,83 @@ class TestAutoApprove:
 
 
 class TestDoneEarlyExit:
-    """When the user types 'done', remaining questions get their default answers."""
+    """When the user types 'done', agent wraps up with assumptions."""
 
     @pytest.mark.asyncio
-    async def test_done_fills_remaining_with_defaults(self, tmp_path: Path, grill_state, make_ui) -> None:
-        """Typing 'done' on Q1 auto-fills Q2 and Q3 with recommended answers."""
+    async def test_done_triggers_wrap_up(
+        self, tmp_path: Path, grill_state, make_ui
+    ) -> None:
+        """Typing 'done' on Q1 triggers a wrap-up agent call."""
         state = grill_state()
         ui = make_ui()
-        # User answers 'done' on the first question
         ui.grill_question.return_value = "done"
         ws = Path(state["project_dir"]) / "workspace"
 
         call_count = 0
 
-        async def fake_run_agent(**kwargs):
+        async def side_effect(**kwargs):
             nonlocal call_count
-            ws.mkdir(parents=True, exist_ok=True)
-            if call_count == 0:
-                (ws / "open_questions.json").write_text(json.dumps(SAMPLE_QUESTIONS))
-            else:
-                (ws / "feature_spec.json").write_text(json.dumps(GRILL_FEATURE_SPEC))
+            idx = call_count
             call_count += 1
+            if idx == 0:
+                # First question
+                return _make_agent_result(QUESTION_RESPONSES[0])
+            if idx == 1:
+                # Wrap-up call after user says "done"
+                return _make_agent_result(DONE_RESPONSE)
+            # Compile
+            ws.mkdir(parents=True, exist_ok=True)
+            (ws / "feature_spec.json").write_text(json.dumps(GRILL_FEATURE_SPEC))
+            return MagicMock()
 
-        mock_agent = AsyncMock(side_effect=fake_run_agent)
+        mock_agent = AsyncMock(side_effect=side_effect)
+        with patch("kindle.stages.grill.run_agent", mock_agent):
+            result = await grill_node(state, ui)
+
+        ui.info.assert_any_call(
+            "User requested early exit — agent will fill remaining gaps with assumptions."
+        )
+        # Only one grill_question call (Q1)
+        assert ui.grill_question.call_count == 1
+
+    @pytest.mark.asyncio
+    async def test_done_records_assumptions_in_transcript(
+        self, tmp_path: Path, grill_state, make_ui
+    ) -> None:
+        """After user says 'done', assumptions from the wrap-up are in transcript."""
+        state = grill_state()
+        ui = make_ui()
+        ui.grill_question.return_value = "done"
+        ws = Path(state["project_dir"]) / "workspace"
+
+        call_count = 0
+
+        async def side_effect(**kwargs):
+            nonlocal call_count
+            idx = call_count
+            call_count += 1
+            if idx == 0:
+                return _make_agent_result(QUESTION_RESPONSES[0])
+            if idx == 1:
+                return _make_agent_result(DONE_RESPONSE)
+            ws.mkdir(parents=True, exist_ok=True)
+            (ws / "feature_spec.json").write_text("{}")
+            return MagicMock()
+
+        mock_agent = AsyncMock(side_effect=side_effect)
         with patch("kindle.stages.grill.run_agent", mock_agent):
             result = await grill_node(state, ui)
 
         transcript = result["grill_transcript"]
-
-        # Q1 should be answered with its recommended (user said done)
-        assert "(auto-default, user said done)" in transcript
-
-        # Q2, Q3 should get auto-default treatment
-        assert "Q2 [user_model]: Is authentication required?" in transcript
-        assert "Answer: Yes, email/password auth (auto-default)" in transcript
-        assert "Q3 [platform]: What is the target platform?" in transcript
-        assert "Answer: Web application (SPA) (auto-default)" in transcript
+        assert "User ended conversation at Q1" in transcript
+        for assumption in DONE_RESPONSE["assumptions"]:
+            assert assumption in transcript
 
     @pytest.mark.asyncio
-    async def test_done_only_asks_one_question(self, tmp_path: Path, grill_state, make_ui) -> None:
-        """After 'done', no further grill_question calls are made."""
-        state = grill_state()
-        ui = make_ui()
-        ui.grill_question.return_value = "done"
-        ws = Path(state["project_dir"]) / "workspace"
-
-        call_count = 0
-
-        async def fake_run_agent(**kwargs):
-            nonlocal call_count
-            ws.mkdir(parents=True, exist_ok=True)
-            if call_count == 0:
-                (ws / "open_questions.json").write_text(json.dumps(SAMPLE_QUESTIONS))
-            else:
-                (ws / "feature_spec.json").write_text("{}")
-            call_count += 1
-
-        mock_agent = AsyncMock(side_effect=fake_run_agent)
-        with patch("kindle.stages.grill.run_agent", mock_agent):
-            await grill_node(state, ui)
-
-        # Only called once (for Q1), remaining filled automatically
-        assert ui.grill_question.call_count == 1
-
-    @pytest.mark.asyncio
-    async def test_done_on_second_question(self, tmp_path: Path, grill_state, make_ui) -> None:
-        """Typing 'done' on Q2 keeps Q1's answer and auto-fills Q3."""
+    async def test_done_on_second_question(
+        self, tmp_path: Path, grill_state, make_ui
+    ) -> None:
+        """Typing 'done' on Q2 keeps Q1's answer and triggers wrap-up."""
         state = grill_state()
         ui = make_ui()
         ui.grill_question.side_effect = ["my custom answer", "done"]
@@ -492,32 +801,34 @@ class TestDoneEarlyExit:
 
         call_count = 0
 
-        async def fake_run_agent(**kwargs):
+        async def side_effect(**kwargs):
             nonlocal call_count
-            ws.mkdir(parents=True, exist_ok=True)
-            if call_count == 0:
-                (ws / "open_questions.json").write_text(json.dumps(SAMPLE_QUESTIONS))
-            else:
-                (ws / "feature_spec.json").write_text(json.dumps(GRILL_FEATURE_SPEC))
+            idx = call_count
             call_count += 1
+            if idx == 0:
+                return _make_agent_result(QUESTION_RESPONSES[0])
+            if idx == 1:
+                return _make_agent_result(QUESTION_RESPONSES[1])
+            if idx == 2:
+                # Wrap-up after done on Q2
+                return _make_agent_result(DONE_RESPONSE)
+            ws.mkdir(parents=True, exist_ok=True)
+            (ws / "feature_spec.json").write_text("{}")
+            return MagicMock()
 
-        mock_agent = AsyncMock(side_effect=fake_run_agent)
+        mock_agent = AsyncMock(side_effect=side_effect)
         with patch("kindle.stages.grill.run_agent", mock_agent):
             result = await grill_node(state, ui)
 
         transcript = result["grill_transcript"]
-
-        # Q1 has custom answer
-        assert "Answer: my custom answer" in transcript
-        # Q2 was where user said done — gets auto-default, user said done
-        assert "(auto-default, user said done)" in transcript
-        # Q3 gets plain auto-default
-        assert "Answer: Web application (SPA) (auto-default)" in transcript
-        # Only 2 grill_question calls
+        assert "my custom answer" in transcript
+        assert "User ended conversation at Q2" in transcript
         assert ui.grill_question.call_count == 2
 
     @pytest.mark.asyncio
-    async def test_done_case_insensitive(self, tmp_path: Path, grill_state, make_ui) -> None:
+    async def test_done_case_insensitive(
+        self, tmp_path: Path, grill_state, make_ui
+    ) -> None:
         """'Done', 'DONE', 'done' all trigger early exit."""
         state = grill_state()
         ui = make_ui()
@@ -526,191 +837,26 @@ class TestDoneEarlyExit:
 
         call_count = 0
 
-        async def fake_run_agent(**kwargs):
+        async def side_effect(**kwargs):
             nonlocal call_count
-            ws.mkdir(parents=True, exist_ok=True)
-            if call_count == 0:
-                (ws / "open_questions.json").write_text(json.dumps(SAMPLE_QUESTIONS))
-            else:
-                (ws / "feature_spec.json").write_text("{}")
+            idx = call_count
             call_count += 1
+            if idx == 0:
+                return _make_agent_result(QUESTION_RESPONSES[0])
+            if idx == 1:
+                return _make_agent_result(DONE_RESPONSE)
+            ws.mkdir(parents=True, exist_ok=True)
+            (ws / "feature_spec.json").write_text("{}")
+            return MagicMock()
 
-        mock_agent = AsyncMock(side_effect=fake_run_agent)
+        mock_agent = AsyncMock(side_effect=side_effect)
         with patch("kindle.stages.grill.run_agent", mock_agent):
-            result = await grill_node(state, ui)
+            await grill_node(state, ui)
 
-        # Should have triggered early exit info message
-        ui.info.assert_any_call("User requested early exit — using defaults for remaining questions.")
+        ui.info.assert_any_call(
+            "User requested early exit — agent will fill remaining gaps with assumptions."
+        )
         assert ui.grill_question.call_count == 1
-
-    @pytest.mark.asyncio
-    async def test_done_on_last_question(self, tmp_path: Path, grill_state, make_ui) -> None:
-        """Typing 'done' on the very last question still records it with auto-default."""
-        state = grill_state()
-        ui = make_ui()
-        # Answer first two normally, then 'done' on last
-        ui.grill_question.side_effect = ["ans1", "ans2", "done"]
-        ws = Path(state["project_dir"]) / "workspace"
-
-        call_count = 0
-
-        async def fake_run_agent(**kwargs):
-            nonlocal call_count
-            ws.mkdir(parents=True, exist_ok=True)
-            if call_count == 0:
-                (ws / "open_questions.json").write_text(json.dumps(SAMPLE_QUESTIONS))
-            else:
-                (ws / "feature_spec.json").write_text("{}")
-            call_count += 1
-
-        mock_agent = AsyncMock(side_effect=fake_run_agent)
-        with patch("kindle.stages.grill.run_agent", mock_agent):
-            result = await grill_node(state, ui)
-
-        transcript = result["grill_transcript"]
-        assert "Answer: ans1" in transcript
-        assert "Answer: ans2" in transcript
-        # Q3 answered with recommended (auto-default, user said done)
-        assert "(auto-default, user said done)" in transcript
-        # No remaining questions after Q3
-        assert "Q4" not in transcript
-
-
-# ---------------------------------------------------------------------------
-# Spec compilation phase
-# ---------------------------------------------------------------------------
-
-
-class TestSpecCompilation:
-    """Tests for the second phase — compiling decisions into feature_spec.json."""
-
-    @pytest.mark.asyncio
-    async def test_feature_spec_parsed_and_returned(self, tmp_path: Path, grill_state, make_ui) -> None:
-        """Feature spec JSON is parsed and returned in state."""
-        state = grill_state()
-        ui = make_ui()
-        ui.grill_question.return_value = "accepted"
-        ws = Path(state["project_dir"]) / "workspace"
-
-        call_count = 0
-
-        async def fake_run_agent(**kwargs):
-            nonlocal call_count
-            ws.mkdir(parents=True, exist_ok=True)
-            if call_count == 0:
-                (ws / "open_questions.json").write_text(json.dumps(SAMPLE_QUESTIONS[:1]))
-            else:
-                (ws / "feature_spec.json").write_text(json.dumps(GRILL_FEATURE_SPEC))
-            call_count += 1
-
-        mock_agent = AsyncMock(side_effect=fake_run_agent)
-        with patch("kindle.stages.grill.run_agent", mock_agent):
-            result = await grill_node(state, ui)
-
-        assert result["feature_spec"] == GRILL_FEATURE_SPEC
-        assert result["feature_spec"]["app_name"] == "TaskFlow"
-        assert "task CRUD" in result["feature_spec"]["core_features"]
-
-    @pytest.mark.asyncio
-    async def test_compile_prompt_includes_idea_and_stack(self, tmp_path: Path, grill_state, make_ui) -> None:
-        """The compilation prompt includes the idea and stack preference."""
-        state = grill_state(stack_preference="Django + Vue")
-        ui = make_ui()
-        ui.grill_question.return_value = "ok"
-        ws = Path(state["project_dir"]) / "workspace"
-
-        call_count = 0
-
-        async def fake_run_agent(**kwargs):
-            nonlocal call_count
-            ws.mkdir(parents=True, exist_ok=True)
-            if call_count == 0:
-                (ws / "open_questions.json").write_text(json.dumps(SAMPLE_QUESTIONS[:1]))
-            else:
-                (ws / "feature_spec.json").write_text("{}")
-            call_count += 1
-
-        mock_agent = AsyncMock(side_effect=fake_run_agent)
-        with patch("kindle.stages.grill.run_agent", mock_agent):
-            await grill_node(state, ui)
-
-        compile_kwargs = mock_agent.call_args_list[1].kwargs
-        assert "a task management app" in compile_kwargs["user_prompt"]
-        assert "Django + Vue" in compile_kwargs["user_prompt"]
-
-    @pytest.mark.asyncio
-    async def test_malformed_feature_spec_returns_empty_dict(self, tmp_path: Path, grill_state, make_ui) -> None:
-        """If feature_spec.json is invalid JSON, return an empty dict."""
-        state = grill_state()
-        ui = make_ui()
-        ws = Path(state["project_dir"]) / "workspace"
-
-        call_count = 0
-
-        async def fake_run_agent(**kwargs):
-            nonlocal call_count
-            ws.mkdir(parents=True, exist_ok=True)
-            if call_count == 0:
-                (ws / "open_questions.json").write_text("[]")
-            else:
-                (ws / "feature_spec.json").write_text("{{broken json}}")
-            call_count += 1
-
-        mock_agent = AsyncMock(side_effect=fake_run_agent)
-        with patch("kindle.stages.grill.run_agent", mock_agent):
-            result = await grill_node(state, ui)
-
-        ui.error.assert_any_call("Failed to parse feature_spec.json.")
-        assert result["feature_spec"] == {}
-
-    @pytest.mark.asyncio
-    async def test_missing_feature_spec_returns_empty_dict(self, tmp_path: Path, grill_state, make_ui) -> None:
-        """If agent fails to create feature_spec.json, return an empty dict."""
-        state = grill_state()
-        ui = make_ui()
-        ws = Path(state["project_dir"]) / "workspace"
-
-        call_count = 0
-
-        async def fake_run_agent(**kwargs):
-            nonlocal call_count
-            ws.mkdir(parents=True, exist_ok=True)
-            if call_count == 0:
-                (ws / "open_questions.json").write_text("[]")
-            else:
-                pass  # Don't create feature_spec.json
-            call_count += 1
-
-        mock_agent = AsyncMock(side_effect=fake_run_agent)
-        with patch("kindle.stages.grill.run_agent", mock_agent):
-            result = await grill_node(state, ui)
-
-        assert result["feature_spec"] == {}
-
-    @pytest.mark.asyncio
-    async def test_no_stack_preference_shows_choose_best_fit(self, tmp_path: Path, grill_state, make_ui) -> None:
-        """When stack_preference is empty, compile prompt says 'choose the best fit'."""
-        state = grill_state(stack_preference="")
-        ui = make_ui()
-        ws = Path(state["project_dir"]) / "workspace"
-
-        call_count = 0
-
-        async def fake_run_agent(**kwargs):
-            nonlocal call_count
-            ws.mkdir(parents=True, exist_ok=True)
-            if call_count == 0:
-                (ws / "open_questions.json").write_text("[]")
-            else:
-                (ws / "feature_spec.json").write_text("{}")
-            call_count += 1
-
-        mock_agent = AsyncMock(side_effect=fake_run_agent)
-        with patch("kindle.stages.grill.run_agent", mock_agent):
-            await grill_node(state, ui)
-
-        compile_kwargs = mock_agent.call_args_list[1].kwargs
-        assert "None — choose the best fit" in compile_kwargs["user_prompt"]
 
 
 # ---------------------------------------------------------------------------
@@ -722,54 +868,43 @@ class TestArtifactSaving:
     """Tests for save_artifact calls — grill_transcript.md and feature_spec.json."""
 
     @pytest.mark.asyncio
-    async def test_grill_transcript_saved(self, tmp_path: Path, grill_state, make_ui) -> None:
+    async def test_grill_transcript_saved(
+        self, tmp_path: Path, grill_state, make_ui
+    ) -> None:
         """grill_transcript.md is saved as an artifact."""
         state = grill_state()
         ui = make_ui()
         ui.grill_question.return_value = "answer"
         ws = Path(state["project_dir"]) / "workspace"
 
-        call_count = 0
-
-        async def fake_run_agent(**kwargs):
-            nonlocal call_count
-            ws.mkdir(parents=True, exist_ok=True)
-            if call_count == 0:
-                (ws / "open_questions.json").write_text(json.dumps(SAMPLE_QUESTIONS[:1]))
-            else:
-                (ws / "feature_spec.json").write_text("{}")
-            call_count += 1
-
-        mock_agent = AsyncMock(side_effect=fake_run_agent)
+        side_effect = _make_conversation_side_effect(
+            QUESTION_RESPONSES[:1], DONE_RESPONSE, {}, ws
+        )
+        mock_agent = AsyncMock(side_effect=side_effect)
         with patch("kindle.stages.grill.run_agent", mock_agent):
             await grill_node(state, ui)
 
-        # Check artifact was actually written to disk
-        transcript_path = Path(state["project_dir"]) / "artifacts" / "grill_transcript.md"
+        transcript_path = (
+            Path(state["project_dir"]) / "artifacts" / "grill_transcript.md"
+        )
         assert transcript_path.exists()
         content = transcript_path.read_text()
-        assert "Q1 [core_functionality]:" in content
-        assert "Answer: answer" in content
+        assert "Q1 [core_functionality]" in content
+        assert "answer" in content
 
     @pytest.mark.asyncio
-    async def test_feature_spec_json_saved(self, tmp_path: Path, grill_state, make_ui) -> None:
+    async def test_feature_spec_json_saved(
+        self, tmp_path: Path, grill_state, make_ui
+    ) -> None:
         """feature_spec.json is saved as a formatted artifact."""
         state = grill_state()
         ui = make_ui()
         ws = Path(state["project_dir"]) / "workspace"
 
-        call_count = 0
-
-        async def fake_run_agent(**kwargs):
-            nonlocal call_count
-            ws.mkdir(parents=True, exist_ok=True)
-            if call_count == 0:
-                (ws / "open_questions.json").write_text("[]")
-            else:
-                (ws / "feature_spec.json").write_text(json.dumps(GRILL_FEATURE_SPEC))
-            call_count += 1
-
-        mock_agent = AsyncMock(side_effect=fake_run_agent)
+        side_effect = _make_conversation_side_effect(
+            [], DONE_RESPONSE, GRILL_FEATURE_SPEC, ws
+        )
+        mock_agent = AsyncMock(side_effect=side_effect)
         with patch("kindle.stages.grill.run_agent", mock_agent):
             await grill_node(state, ui)
 
@@ -779,7 +914,9 @@ class TestArtifactSaving:
         assert saved_spec == GRILL_FEATURE_SPEC
 
     @pytest.mark.asyncio
-    async def test_empty_spec_saved_as_empty_dict(self, tmp_path: Path, grill_state, make_ui) -> None:
+    async def test_empty_spec_saved_as_empty_dict(
+        self, tmp_path: Path, grill_state, make_ui
+    ) -> None:
         """When feature_spec.json is missing, an empty dict is saved."""
         state = grill_state()
         ui = make_ui()
@@ -787,16 +924,16 @@ class TestArtifactSaving:
 
         call_count = 0
 
-        async def fake_run_agent(**kwargs):
+        async def side_effect(**kwargs):
             nonlocal call_count
-            ws.mkdir(parents=True, exist_ok=True)
-            if call_count == 0:
-                (ws / "open_questions.json").write_text("[]")
-            else:
-                pass  # No feature_spec.json
+            idx = call_count
             call_count += 1
+            if idx == 0:
+                return _make_agent_result(DONE_RESPONSE)
+            ws.mkdir(parents=True, exist_ok=True)
+            return MagicMock()
 
-        mock_agent = AsyncMock(side_effect=fake_run_agent)
+        mock_agent = AsyncMock(side_effect=side_effect)
         with patch("kindle.stages.grill.run_agent", mock_agent):
             await grill_node(state, ui)
 
@@ -805,24 +942,16 @@ class TestArtifactSaving:
         assert json.loads(spec_path.read_text()) == {}
 
     @pytest.mark.asyncio
-    async def test_temp_files_cleaned_up(self, tmp_path: Path, grill_state, make_ui) -> None:
+    async def test_temp_files_cleaned_up(
+        self, tmp_path: Path, grill_state, make_ui
+    ) -> None:
         """open_questions.json and feature_spec.json are removed from workspace."""
         state = grill_state()
         ui = make_ui()
         ws = Path(state["project_dir"]) / "workspace"
 
-        call_count = 0
-
-        async def fake_run_agent(**kwargs):
-            nonlocal call_count
-            ws.mkdir(parents=True, exist_ok=True)
-            if call_count == 0:
-                (ws / "open_questions.json").write_text("[]")
-            else:
-                (ws / "feature_spec.json").write_text("{}")
-            call_count += 1
-
-        mock_agent = AsyncMock(side_effect=fake_run_agent)
+        side_effect = _make_conversation_side_effect([], DONE_RESPONSE, {}, ws)
+        mock_agent = AsyncMock(side_effect=side_effect)
         with patch("kindle.stages.grill.run_agent", mock_agent):
             await grill_node(state, ui)
 
@@ -839,24 +968,16 @@ class TestStateReturn:
     """Tests for the returned state dictionary."""
 
     @pytest.mark.asyncio
-    async def test_returns_required_keys(self, tmp_path: Path, grill_state, make_ui) -> None:
+    async def test_returns_required_keys(
+        self, tmp_path: Path, grill_state, make_ui
+    ) -> None:
         """Return dict must contain feature_spec, grill_transcript, current_stage."""
         state = grill_state()
         ui = make_ui()
         ws = Path(state["project_dir"]) / "workspace"
 
-        call_count = 0
-
-        async def fake_run_agent(**kwargs):
-            nonlocal call_count
-            ws.mkdir(parents=True, exist_ok=True)
-            if call_count == 0:
-                (ws / "open_questions.json").write_text("[]")
-            else:
-                (ws / "feature_spec.json").write_text("{}")
-            call_count += 1
-
-        mock_agent = AsyncMock(side_effect=fake_run_agent)
+        side_effect = _make_conversation_side_effect([], DONE_RESPONSE, {}, ws)
+        mock_agent = AsyncMock(side_effect=side_effect)
         with patch("kindle.stages.grill.run_agent", mock_agent):
             result = await grill_node(state, ui)
 
@@ -865,31 +986,25 @@ class TestStateReturn:
         assert "current_stage" in result
 
     @pytest.mark.asyncio
-    async def test_current_stage_is_grill(self, tmp_path: Path, grill_state, make_ui) -> None:
+    async def test_current_stage_is_grill(
+        self, tmp_path: Path, grill_state, make_ui
+    ) -> None:
         """current_stage is always 'grill' after this node runs."""
         state = grill_state()
         ui = make_ui()
         ws = Path(state["project_dir"]) / "workspace"
 
-        call_count = 0
-
-        async def fake_run_agent(**kwargs):
-            nonlocal call_count
-            ws.mkdir(parents=True, exist_ok=True)
-            if call_count == 0:
-                (ws / "open_questions.json").write_text("[]")
-            else:
-                (ws / "feature_spec.json").write_text("{}")
-            call_count += 1
-
-        mock_agent = AsyncMock(side_effect=fake_run_agent)
+        side_effect = _make_conversation_side_effect([], DONE_RESPONSE, {}, ws)
+        mock_agent = AsyncMock(side_effect=side_effect)
         with patch("kindle.stages.grill.run_agent", mock_agent):
             result = await grill_node(state, ui)
 
         assert result["current_stage"] == "grill"
 
     @pytest.mark.asyncio
-    async def test_feature_spec_is_dict(self, tmp_path: Path, grill_state, make_ui) -> None:
+    async def test_feature_spec_is_dict(
+        self, tmp_path: Path, grill_state, make_ui
+    ) -> None:
         """feature_spec is always a dict, even on parse failure."""
         state = grill_state()
         ui = make_ui()
@@ -897,68 +1012,57 @@ class TestStateReturn:
 
         call_count = 0
 
-        async def fake_run_agent(**kwargs):
+        async def side_effect(**kwargs):
             nonlocal call_count
-            ws.mkdir(parents=True, exist_ok=True)
-            if call_count == 0:
-                (ws / "open_questions.json").write_text("[]")
-            else:
-                (ws / "feature_spec.json").write_text("not json")
+            idx = call_count
             call_count += 1
+            if idx == 0:
+                return _make_agent_result(DONE_RESPONSE)
+            ws.mkdir(parents=True, exist_ok=True)
+            (ws / "feature_spec.json").write_text("not json")
+            return MagicMock()
 
-        mock_agent = AsyncMock(side_effect=fake_run_agent)
+        mock_agent = AsyncMock(side_effect=side_effect)
         with patch("kindle.stages.grill.run_agent", mock_agent):
             result = await grill_node(state, ui)
 
         assert isinstance(result["feature_spec"], dict)
 
     @pytest.mark.asyncio
-    async def test_grill_transcript_is_string(self, tmp_path: Path, grill_state, make_ui) -> None:
+    async def test_grill_transcript_is_string(
+        self, tmp_path: Path, grill_state, make_ui
+    ) -> None:
         """grill_transcript is always a string."""
         state = grill_state()
         ui = make_ui()
         ws = Path(state["project_dir"]) / "workspace"
 
-        call_count = 0
-
-        async def fake_run_agent(**kwargs):
-            nonlocal call_count
-            ws.mkdir(parents=True, exist_ok=True)
-            if call_count == 0:
-                (ws / "open_questions.json").write_text("[]")
-            else:
-                (ws / "feature_spec.json").write_text("{}")
-            call_count += 1
-
-        mock_agent = AsyncMock(side_effect=fake_run_agent)
+        side_effect = _make_conversation_side_effect([], DONE_RESPONSE, {}, ws)
+        mock_agent = AsyncMock(side_effect=side_effect)
         with patch("kindle.stages.grill.run_agent", mock_agent):
             result = await grill_node(state, ui)
 
         assert isinstance(result["grill_transcript"], str)
 
     @pytest.mark.asyncio
-    async def test_only_three_keys_returned(self, tmp_path: Path, grill_state, make_ui) -> None:
+    async def test_only_three_keys_returned(
+        self, tmp_path: Path, grill_state, make_ui
+    ) -> None:
         """Return dict has exactly three keys — nothing extra leaking."""
         state = grill_state()
         ui = make_ui()
         ws = Path(state["project_dir"]) / "workspace"
 
-        call_count = 0
-
-        async def fake_run_agent(**kwargs):
-            nonlocal call_count
-            ws.mkdir(parents=True, exist_ok=True)
-            if call_count == 0:
-                (ws / "open_questions.json").write_text("[]")
-            else:
-                (ws / "feature_spec.json").write_text("{}")
-            call_count += 1
-
-        mock_agent = AsyncMock(side_effect=fake_run_agent)
+        side_effect = _make_conversation_side_effect([], DONE_RESPONSE, {}, ws)
+        mock_agent = AsyncMock(side_effect=side_effect)
         with patch("kindle.stages.grill.run_agent", mock_agent):
             result = await grill_node(state, ui)
 
-        assert set(result.keys()) == {"feature_spec", "grill_transcript", "current_stage"}
+        assert set(result.keys()) == {
+            "feature_spec",
+            "grill_transcript",
+            "current_stage",
+        }
 
 
 # ---------------------------------------------------------------------------
@@ -970,24 +1074,16 @@ class TestStageLifecycle:
     """Tests for UI stage lifecycle calls and mark_stage_complete."""
 
     @pytest.mark.asyncio
-    async def test_stage_start_and_done_called(self, tmp_path: Path, grill_state, make_ui) -> None:
+    async def test_stage_start_and_done_called(
+        self, tmp_path: Path, grill_state, make_ui
+    ) -> None:
         """ui.stage_start('grill') and ui.stage_done('grill') bracket the node."""
         state = grill_state()
         ui = make_ui()
         ws = Path(state["project_dir"]) / "workspace"
 
-        call_count = 0
-
-        async def fake_run_agent(**kwargs):
-            nonlocal call_count
-            ws.mkdir(parents=True, exist_ok=True)
-            if call_count == 0:
-                (ws / "open_questions.json").write_text("[]")
-            else:
-                (ws / "feature_spec.json").write_text("{}")
-            call_count += 1
-
-        mock_agent = AsyncMock(side_effect=fake_run_agent)
+        side_effect = _make_conversation_side_effect([], DONE_RESPONSE, {}, ws)
+        mock_agent = AsyncMock(side_effect=side_effect)
         with patch("kindle.stages.grill.run_agent", mock_agent):
             await grill_node(state, ui)
 
@@ -995,24 +1091,16 @@ class TestStageLifecycle:
         ui.stage_done.assert_called_once_with("grill")
 
     @pytest.mark.asyncio
-    async def test_mark_stage_complete_called(self, tmp_path: Path, grill_state, make_ui) -> None:
+    async def test_mark_stage_complete_called(
+        self, tmp_path: Path, grill_state, make_ui
+    ) -> None:
         """mark_stage_complete updates metadata.json with 'grill'."""
         state = grill_state()
         ui = make_ui()
         ws = Path(state["project_dir"]) / "workspace"
 
-        call_count = 0
-
-        async def fake_run_agent(**kwargs):
-            nonlocal call_count
-            ws.mkdir(parents=True, exist_ok=True)
-            if call_count == 0:
-                (ws / "open_questions.json").write_text("[]")
-            else:
-                (ws / "feature_spec.json").write_text("{}")
-            call_count += 1
-
-        mock_agent = AsyncMock(side_effect=fake_run_agent)
+        side_effect = _make_conversation_side_effect([], DONE_RESPONSE, {}, ws)
+        mock_agent = AsyncMock(side_effect=side_effect)
         with patch("kindle.stages.grill.run_agent", mock_agent):
             await grill_node(state, ui)
 
@@ -1020,203 +1108,84 @@ class TestStageLifecycle:
         assert "grill" in meta["stages_completed"]
 
     @pytest.mark.asyncio
-    async def test_run_agent_called_twice(self, tmp_path: Path, grill_state, make_ui) -> None:
-        """run_agent is called exactly twice: once for generation, once for compilation."""
-        state = grill_state()
-        ui = make_ui()
-        ws = Path(state["project_dir"]) / "workspace"
-
-        call_count = 0
-
-        async def fake_run_agent(**kwargs):
-            nonlocal call_count
-            ws.mkdir(parents=True, exist_ok=True)
-            if call_count == 0:
-                (ws / "open_questions.json").write_text("[]")
-            else:
-                (ws / "feature_spec.json").write_text("{}")
-            call_count += 1
-
-        mock_agent = AsyncMock(side_effect=fake_run_agent)
-        with patch("kindle.stages.grill.run_agent", mock_agent):
-            await grill_node(state, ui)
-
-        assert mock_agent.call_count == 2
-
-    @pytest.mark.asyncio
-    async def test_compile_info_message_shown(self, tmp_path: Path, grill_state, make_ui) -> None:
-        """User sees an info message about spec compilation."""
-        state = grill_state()
-        ui = make_ui()
-        ws = Path(state["project_dir"]) / "workspace"
-
-        call_count = 0
-
-        async def fake_run_agent(**kwargs):
-            nonlocal call_count
-            ws.mkdir(parents=True, exist_ok=True)
-            if call_count == 0:
-                (ws / "open_questions.json").write_text("[]")
-            else:
-                (ws / "feature_spec.json").write_text("{}")
-            call_count += 1
-
-        mock_agent = AsyncMock(side_effect=fake_run_agent)
-        with patch("kindle.stages.grill.run_agent", mock_agent):
-            await grill_node(state, ui)
-
-        ui.info.assert_any_call("Compiling feature specification from decisions...")
-
-
-# ---------------------------------------------------------------------------
-# Edge cases: non-dict question items
-# ---------------------------------------------------------------------------
-
-
-class TestEdgeCaseQuestionFormats:
-    """Questions might be strings instead of dicts; verify graceful handling."""
-
-    @pytest.mark.asyncio
-    async def test_plain_string_questions(self, tmp_path: Path, grill_state, make_ui) -> None:
-        """If questions are plain strings (not dicts), they still work."""
-        state = grill_state()
-        ui = make_ui()
-        ui.grill_question.return_value = "my answer"
-        ws = Path(state["project_dir"]) / "workspace"
-
-        plain_questions = ["What features?", "What platform?"]
-
-        call_count = 0
-
-        async def fake_run_agent(**kwargs):
-            nonlocal call_count
-            ws.mkdir(parents=True, exist_ok=True)
-            if call_count == 0:
-                (ws / "open_questions.json").write_text(json.dumps(plain_questions))
-            else:
-                (ws / "feature_spec.json").write_text("{}")
-            call_count += 1
-
-        mock_agent = AsyncMock(side_effect=fake_run_agent)
-        with patch("kindle.stages.grill.run_agent", mock_agent):
-            result = await grill_node(state, ui)
-
-        assert ui.grill_question.call_count == 2
-        # For plain strings, recommended is "No recommendation" and category is "general"
-        first_call = ui.grill_question.call_args_list[0]
-        assert first_call[0] == ("What features?", "No recommendation", "general", 1)
-
-    @pytest.mark.asyncio
-    async def test_dict_without_recommended_answer(self, tmp_path: Path, grill_state, make_ui) -> None:
-        """Questions with missing recommended_answer default to 'No recommendation'."""
-        state = grill_state()
-        ui = make_ui()
-        ui.grill_question.return_value = "sure"
-        ws = Path(state["project_dir"]) / "workspace"
-
-        questions = [{"question": "Auth needed?", "category": "user_model"}]
-
-        call_count = 0
-
-        async def fake_run_agent(**kwargs):
-            nonlocal call_count
-            ws.mkdir(parents=True, exist_ok=True)
-            if call_count == 0:
-                (ws / "open_questions.json").write_text(json.dumps(questions))
-            else:
-                (ws / "feature_spec.json").write_text("{}")
-            call_count += 1
-
-        mock_agent = AsyncMock(side_effect=fake_run_agent)
-        with patch("kindle.stages.grill.run_agent", mock_agent):
-            result = await grill_node(state, ui)
-
-        ui.grill_question.assert_called_once_with("Auth needed?", "No recommendation", "user_model", 1)
-
-    @pytest.mark.asyncio
-    async def test_dict_without_category(self, tmp_path: Path, grill_state, make_ui) -> None:
-        """Questions with missing category default to 'general'."""
+    async def test_conversation_calls_plus_compile(
+        self, tmp_path: Path, grill_state, make_ui
+    ) -> None:
+        """run_agent is called N+1 times: N conversation turns + done + compile."""
         state = grill_state()
         ui = make_ui()
         ui.grill_question.return_value = "ok"
         ws = Path(state["project_dir"]) / "workspace"
 
-        questions = [{"question": "Platform?", "recommended_answer": "Web"}]
-
-        call_count = 0
-
-        async def fake_run_agent(**kwargs):
-            nonlocal call_count
-            ws.mkdir(parents=True, exist_ok=True)
-            if call_count == 0:
-                (ws / "open_questions.json").write_text(json.dumps(questions))
-            else:
-                (ws / "feature_spec.json").write_text("{}")
-            call_count += 1
-
-        mock_agent = AsyncMock(side_effect=fake_run_agent)
+        n_questions = 2
+        side_effect = _make_conversation_side_effect(
+            QUESTION_RESPONSES[:n_questions], DONE_RESPONSE, {}, ws
+        )
+        mock_agent = AsyncMock(side_effect=side_effect)
         with patch("kindle.stages.grill.run_agent", mock_agent):
             await grill_node(state, ui)
 
-        ui.grill_question.assert_called_once_with("Platform?", "Web", "general", 1)
+        # n_questions conversation turns + 1 done + 1 compile = n_questions + 2
+        assert mock_agent.call_count == n_questions + 2
 
     @pytest.mark.asyncio
-    async def test_done_with_plain_string_remaining(self, tmp_path: Path, grill_state, make_ui) -> None:
-        """'done' early exit works even when remaining questions are plain strings."""
-        state = grill_state()
-        ui = make_ui()
-        ws = Path(state["project_dir"]) / "workspace"
-
-        mixed_questions = [
-            {"question": "Features?", "category": "core", "recommended_answer": "CRUD"},
-            "What database?",
-        ]
-        ui.grill_question.return_value = "done"
-
-        call_count = 0
-
-        async def fake_run_agent(**kwargs):
-            nonlocal call_count
-            ws.mkdir(parents=True, exist_ok=True)
-            if call_count == 0:
-                (ws / "open_questions.json").write_text(json.dumps(mixed_questions))
-            else:
-                (ws / "feature_spec.json").write_text("{}")
-            call_count += 1
-
-        mock_agent = AsyncMock(side_effect=fake_run_agent)
-        with patch("kindle.stages.grill.run_agent", mock_agent):
-            result = await grill_node(state, ui)
-
-        transcript = result["grill_transcript"]
-        # Q1 done -> auto-default
-        assert "(auto-default, user said done)" in transcript
-        # Q2 is plain string -> auto-default with "No recommendation"
-        assert "What database?" in transcript
-        assert "No recommendation (auto-default)" in transcript
-        assert ui.grill_question.call_count == 1
-
-    @pytest.mark.asyncio
-    async def test_model_passed_through_to_agent(self, tmp_path: Path, grill_state, make_ui) -> None:
-        """state['model'] is forwarded to both run_agent calls."""
+    async def test_model_passed_through_to_agent(
+        self, tmp_path: Path, grill_state, make_ui
+    ) -> None:
+        """state['model'] is forwarded to all run_agent calls."""
         state = grill_state(model="claude-sonnet-4-20250514")
         ui = make_ui()
+        ui.grill_question.return_value = "ok"
         ws = Path(state["project_dir"]) / "workspace"
 
-        call_count = 0
-
-        async def fake_run_agent(**kwargs):
-            nonlocal call_count
-            ws.mkdir(parents=True, exist_ok=True)
-            if call_count == 0:
-                (ws / "open_questions.json").write_text("[]")
-            else:
-                (ws / "feature_spec.json").write_text("{}")
-            call_count += 1
-
-        mock_agent = AsyncMock(side_effect=fake_run_agent)
+        side_effect = _make_conversation_side_effect(
+            QUESTION_RESPONSES[:1], DONE_RESPONSE, {}, ws
+        )
+        mock_agent = AsyncMock(side_effect=side_effect)
         with patch("kindle.stages.grill.run_agent", mock_agent):
             await grill_node(state, ui)
 
         for c in mock_agent.call_args_list:
             assert c.kwargs["model"] == "claude-sonnet-4-20250514"
+
+    @pytest.mark.asyncio
+    async def test_grill_complete_info_message(
+        self, tmp_path: Path, grill_state, make_ui
+    ) -> None:
+        """Info message shown when grill completes with confidence."""
+        state = grill_state()
+        ui = make_ui()
+        ui.grill_question.return_value = "ok"
+        ws = Path(state["project_dir"]) / "workspace"
+
+        side_effect = _make_conversation_side_effect(
+            QUESTION_RESPONSES[:1], DONE_RESPONSE, {}, ws
+        )
+        mock_agent = AsyncMock(side_effect=side_effect)
+        with patch("kindle.stages.grill.run_agent", mock_agent):
+            await grill_node(state, ui)
+
+        ui.info.assert_any_call("Grill complete after 1 questions (confidence: high).")
+
+    @pytest.mark.asyncio
+    async def test_stage_tags_increment(
+        self, tmp_path: Path, grill_state, make_ui
+    ) -> None:
+        """Each conversation turn uses an incrementing stage tag like grill_q1, grill_q2."""
+        state = grill_state()
+        ui = make_ui()
+        ui.grill_question.return_value = "ok"
+        ws = Path(state["project_dir"]) / "workspace"
+
+        side_effect = _make_conversation_side_effect(
+            QUESTION_RESPONSES[:2], DONE_RESPONSE, {}, ws
+        )
+        mock_agent = AsyncMock(side_effect=side_effect)
+        with patch("kindle.stages.grill.run_agent", mock_agent):
+            await grill_node(state, ui)
+
+        stages = [c.kwargs["stage"] for c in mock_agent.call_args_list]
+        assert stages[0] == "grill_q1"
+        assert stages[1] == "grill_q2"
+        # Third is done response (grill_q3), fourth is compile
+        assert stages[-1] == "grill_compile"
