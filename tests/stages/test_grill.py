@@ -197,18 +197,14 @@ class TestConversationLoop:
     """Tests for the adaptive conversation loop in grill_node."""
 
     @pytest.mark.asyncio
-    async def test_agent_called_with_idea_in_prompt(
-        self, tmp_path: Path, grill_state, make_ui
-    ) -> None:
+    async def test_agent_called_with_idea_in_prompt(self, tmp_path: Path, grill_state, make_ui) -> None:
         """The first run_agent call receives the user's idea in the prompt."""
         state = grill_state()
         ui = make_ui()
         ui.grill_question.return_value = "accepted"
         ws = Path(state["project_dir"]) / "workspace"
 
-        side_effect = _make_conversation_side_effect(
-            QUESTION_RESPONSES[:1], DONE_RESPONSE, {}, ws
-        )
+        side_effect = _make_conversation_side_effect(QUESTION_RESPONSES[:1], DONE_RESPONSE, {}, ws)
         mock_agent = AsyncMock(side_effect=side_effect)
         with patch("kindle.stages.grill.run_agent", mock_agent):
             await grill_node(state, ui)
@@ -217,18 +213,14 @@ class TestConversationLoop:
         assert "a task management app" in first_call_kwargs["user_prompt"]
 
     @pytest.mark.asyncio
-    async def test_agent_prompt_includes_stack_preference(
-        self, tmp_path: Path, grill_state, make_ui
-    ) -> None:
+    async def test_agent_prompt_includes_stack_preference(self, tmp_path: Path, grill_state, make_ui) -> None:
         """When stack_preference is set, it appears in the conversation prompt."""
         state = grill_state(stack_preference="Python + React")
         ui = make_ui()
         ui.grill_question.return_value = "ok"
         ws = Path(state["project_dir"]) / "workspace"
 
-        side_effect = _make_conversation_side_effect(
-            QUESTION_RESPONSES[:1], DONE_RESPONSE, {}, ws
-        )
+        side_effect = _make_conversation_side_effect(QUESTION_RESPONSES[:1], DONE_RESPONSE, {}, ws)
         mock_agent = AsyncMock(side_effect=side_effect)
         with patch("kindle.stages.grill.run_agent", mock_agent):
             await grill_node(state, ui)
@@ -237,18 +229,14 @@ class TestConversationLoop:
         assert "Python + React" in first_call_kwargs["user_prompt"]
 
     @pytest.mark.asyncio
-    async def test_questions_presented_to_user(
-        self, tmp_path: Path, grill_state, make_ui
-    ) -> None:
+    async def test_questions_presented_to_user(self, tmp_path: Path, grill_state, make_ui) -> None:
         """Each question from the agent is presented via ui.grill_question."""
         state = grill_state()
         ui = make_ui()
         ui.grill_question.return_value = "accepted"
         ws = Path(state["project_dir"]) / "workspace"
 
-        side_effect = _make_conversation_side_effect(
-            QUESTION_RESPONSES, DONE_RESPONSE, GRILL_FEATURE_SPEC, ws
-        )
+        side_effect = _make_conversation_side_effect(QUESTION_RESPONSES, DONE_RESPONSE, GRILL_FEATURE_SPEC, ws)
         mock_agent = AsyncMock(side_effect=side_effect)
         with patch("kindle.stages.grill.run_agent", mock_agent):
             await grill_node(state, ui)
@@ -256,18 +244,14 @@ class TestConversationLoop:
         assert ui.grill_question.call_count == len(QUESTION_RESPONSES)
 
     @pytest.mark.asyncio
-    async def test_grill_question_called_with_correct_kwargs(
-        self, tmp_path: Path, grill_state, make_ui
-    ) -> None:
+    async def test_grill_question_called_with_correct_kwargs(self, tmp_path: Path, grill_state, make_ui) -> None:
         """grill_question receives question, recommended, category, number, and why_asking."""
         state = grill_state()
         ui = make_ui()
         ui.grill_question.return_value = "ok"
         ws = Path(state["project_dir"]) / "workspace"
 
-        side_effect = _make_conversation_side_effect(
-            QUESTION_RESPONSES[:1], DONE_RESPONSE, {}, ws
-        )
+        side_effect = _make_conversation_side_effect(QUESTION_RESPONSES[:1], DONE_RESPONSE, {}, ws)
         mock_agent = AsyncMock(side_effect=side_effect)
         with patch("kindle.stages.grill.run_agent", mock_agent):
             await grill_node(state, ui)
@@ -282,9 +266,7 @@ class TestConversationLoop:
         )
 
     @pytest.mark.asyncio
-    async def test_agent_stops_on_done_status(
-        self, tmp_path: Path, grill_state, make_ui
-    ) -> None:
+    async def test_agent_stops_on_done_status(self, tmp_path: Path, grill_state, make_ui) -> None:
         """When agent returns status=done, no more questions are asked."""
         state = grill_state()
         ui = make_ui()
@@ -292,9 +274,7 @@ class TestConversationLoop:
         ws = Path(state["project_dir"]) / "workspace"
 
         # 2 questions then done
-        side_effect = _make_conversation_side_effect(
-            QUESTION_RESPONSES[:2], DONE_RESPONSE, {}, ws
-        )
+        side_effect = _make_conversation_side_effect(QUESTION_RESPONSES[:2], DONE_RESPONSE, {}, ws)
         mock_agent = AsyncMock(side_effect=side_effect)
         with patch("kindle.stages.grill.run_agent", mock_agent):
             await grill_node(state, ui)
@@ -302,9 +282,7 @@ class TestConversationLoop:
         assert ui.grill_question.call_count == 2
 
     @pytest.mark.asyncio
-    async def test_error_response_breaks_loop(
-        self, tmp_path: Path, grill_state, make_ui
-    ) -> None:
+    async def test_error_response_breaks_loop(self, tmp_path: Path, grill_state, make_ui) -> None:
         """If agent returns unparseable response, loop exits gracefully."""
         state = grill_state()
         ui = make_ui()
@@ -329,15 +307,11 @@ class TestConversationLoop:
         with patch("kindle.stages.grill.run_agent", mock_agent):
             result = await grill_node(state, ui)
 
-        ui.error.assert_any_call(
-            "Grill agent returned unparseable response on turn 1. Wrapping up."
-        )
+        ui.error.assert_any_call("Grill agent returned unparseable response on turn 1. Wrapping up.")
         ui.grill_question.assert_not_called()
 
     @pytest.mark.asyncio
-    async def test_empty_question_breaks_loop(
-        self, tmp_path: Path, grill_state, make_ui
-    ) -> None:
+    async def test_empty_question_breaks_loop(self, tmp_path: Path, grill_state, make_ui) -> None:
         """If agent returns a question with empty text, loop exits."""
         state = grill_state()
         ui = make_ui()
@@ -367,9 +341,7 @@ class TestConversationLoop:
         with patch("kindle.stages.grill.run_agent", mock_agent):
             await grill_node(state, ui)
 
-        ui.error.assert_any_call(
-            "Grill agent returned empty question on turn 1. Wrapping up."
-        )
+        ui.error.assert_any_call("Grill agent returned empty question on turn 1. Wrapping up.")
         ui.grill_question.assert_not_called()
 
 
@@ -382,9 +354,7 @@ class TestTranscriptRecording:
     """Tests for the grill transcript output."""
 
     @pytest.mark.asyncio
-    async def test_transcript_records_all_answers(
-        self, tmp_path: Path, grill_state, make_ui
-    ) -> None:
+    async def test_transcript_records_all_answers(self, tmp_path: Path, grill_state, make_ui) -> None:
         """Every Q&A pair is captured in the transcript."""
         state = grill_state()
         ui = make_ui()
@@ -395,9 +365,7 @@ class TestTranscriptRecording:
         ]
         ws = Path(state["project_dir"]) / "workspace"
 
-        side_effect = _make_conversation_side_effect(
-            QUESTION_RESPONSES, DONE_RESPONSE, GRILL_FEATURE_SPEC, ws
-        )
+        side_effect = _make_conversation_side_effect(QUESTION_RESPONSES, DONE_RESPONSE, GRILL_FEATURE_SPEC, ws)
         mock_agent = AsyncMock(side_effect=side_effect)
         with patch("kindle.stages.grill.run_agent", mock_agent):
             result = await grill_node(state, ui)
@@ -411,18 +379,14 @@ class TestTranscriptRecording:
         assert "third answer" in transcript
 
     @pytest.mark.asyncio
-    async def test_transcript_includes_recommended_answers(
-        self, tmp_path: Path, grill_state, make_ui
-    ) -> None:
+    async def test_transcript_includes_recommended_answers(self, tmp_path: Path, grill_state, make_ui) -> None:
         """The transcript records the recommended answer for each question."""
         state = grill_state()
         ui = make_ui()
         ui.grill_question.return_value = "custom answer"
         ws = Path(state["project_dir"]) / "workspace"
 
-        side_effect = _make_conversation_side_effect(
-            QUESTION_RESPONSES[:1], DONE_RESPONSE, {}, ws
-        )
+        side_effect = _make_conversation_side_effect(QUESTION_RESPONSES[:1], DONE_RESPONSE, {}, ws)
         mock_agent = AsyncMock(side_effect=side_effect)
         with patch("kindle.stages.grill.run_agent", mock_agent):
             result = await grill_node(state, ui)
@@ -432,18 +396,14 @@ class TestTranscriptRecording:
         assert "Answer:** custom answer" in transcript
 
     @pytest.mark.asyncio
-    async def test_transcript_includes_why_asking(
-        self, tmp_path: Path, grill_state, make_ui
-    ) -> None:
+    async def test_transcript_includes_why_asking(self, tmp_path: Path, grill_state, make_ui) -> None:
         """The transcript records why the agent asked each question."""
         state = grill_state()
         ui = make_ui()
         ui.grill_question.return_value = "ok"
         ws = Path(state["project_dir"]) / "workspace"
 
-        side_effect = _make_conversation_side_effect(
-            QUESTION_RESPONSES[:1], DONE_RESPONSE, {}, ws
-        )
+        side_effect = _make_conversation_side_effect(QUESTION_RESPONSES[:1], DONE_RESPONSE, {}, ws)
         mock_agent = AsyncMock(side_effect=side_effect)
         with patch("kindle.stages.grill.run_agent", mock_agent):
             result = await grill_node(state, ui)
@@ -452,18 +412,14 @@ class TestTranscriptRecording:
         assert "Need to scope the core build" in transcript
 
     @pytest.mark.asyncio
-    async def test_transcript_records_done_summary(
-        self, tmp_path: Path, grill_state, make_ui
-    ) -> None:
+    async def test_transcript_records_done_summary(self, tmp_path: Path, grill_state, make_ui) -> None:
         """When agent says done, the summary and confidence are recorded."""
         state = grill_state()
         ui = make_ui()
         ui.grill_question.return_value = "ok"
         ws = Path(state["project_dir"]) / "workspace"
 
-        side_effect = _make_conversation_side_effect(
-            QUESTION_RESPONSES[:1], DONE_RESPONSE, {}, ws
-        )
+        side_effect = _make_conversation_side_effect(QUESTION_RESPONSES[:1], DONE_RESPONSE, {}, ws)
         mock_agent = AsyncMock(side_effect=side_effect)
         with patch("kindle.stages.grill.run_agent", mock_agent):
             result = await grill_node(state, ui)
@@ -474,18 +430,14 @@ class TestTranscriptRecording:
         assert "high" in transcript
 
     @pytest.mark.asyncio
-    async def test_transcript_records_done_assumptions(
-        self, tmp_path: Path, grill_state, make_ui
-    ) -> None:
+    async def test_transcript_records_done_assumptions(self, tmp_path: Path, grill_state, make_ui) -> None:
         """Done assumptions appear in the transcript."""
         state = grill_state()
         ui = make_ui()
         ui.grill_question.return_value = "ok"
         ws = Path(state["project_dir"]) / "workspace"
 
-        side_effect = _make_conversation_side_effect(
-            QUESTION_RESPONSES[:1], DONE_RESPONSE, {}, ws
-        )
+        side_effect = _make_conversation_side_effect(QUESTION_RESPONSES[:1], DONE_RESPONSE, {}, ws)
         mock_agent = AsyncMock(side_effect=side_effect)
         with patch("kindle.stages.grill.run_agent", mock_agent):
             result = await grill_node(state, ui)
@@ -504,18 +456,14 @@ class TestCompilePhase:
     """Tests for the compilation of decisions into feature_spec.json."""
 
     @pytest.mark.asyncio
-    async def test_compile_prompt_includes_transcript(
-        self, tmp_path: Path, grill_state, make_ui
-    ) -> None:
+    async def test_compile_prompt_includes_transcript(self, tmp_path: Path, grill_state, make_ui) -> None:
         """The compile agent call includes the full conversation transcript."""
         state = grill_state()
         ui = make_ui()
         ui.grill_question.side_effect = ["answer1", "answer2", "answer3"]
         ws = Path(state["project_dir"]) / "workspace"
 
-        side_effect = _make_conversation_side_effect(
-            QUESTION_RESPONSES, DONE_RESPONSE, GRILL_FEATURE_SPEC, ws
-        )
+        side_effect = _make_conversation_side_effect(QUESTION_RESPONSES, DONE_RESPONSE, GRILL_FEATURE_SPEC, ws)
         mock_agent = AsyncMock(side_effect=side_effect)
         with patch("kindle.stages.grill.run_agent", mock_agent):
             await grill_node(state, ui)
@@ -527,18 +475,14 @@ class TestCompilePhase:
         assert compile_kwargs["stage"] == "grill_compile"
 
     @pytest.mark.asyncio
-    async def test_compile_prompt_includes_idea_and_stack(
-        self, tmp_path: Path, grill_state, make_ui
-    ) -> None:
+    async def test_compile_prompt_includes_idea_and_stack(self, tmp_path: Path, grill_state, make_ui) -> None:
         """The compilation prompt includes the idea and stack preference."""
         state = grill_state(stack_preference="Django + Vue")
         ui = make_ui()
         ui.grill_question.return_value = "ok"
         ws = Path(state["project_dir"]) / "workspace"
 
-        side_effect = _make_conversation_side_effect(
-            QUESTION_RESPONSES[:1], DONE_RESPONSE, {}, ws
-        )
+        side_effect = _make_conversation_side_effect(QUESTION_RESPONSES[:1], DONE_RESPONSE, {}, ws)
         mock_agent = AsyncMock(side_effect=side_effect)
         with patch("kindle.stages.grill.run_agent", mock_agent):
             await grill_node(state, ui)
@@ -548,18 +492,14 @@ class TestCompilePhase:
         assert "Django + Vue" in compile_kwargs["user_prompt"]
 
     @pytest.mark.asyncio
-    async def test_feature_spec_parsed_and_returned(
-        self, tmp_path: Path, grill_state, make_ui
-    ) -> None:
+    async def test_feature_spec_parsed_and_returned(self, tmp_path: Path, grill_state, make_ui) -> None:
         """Feature spec JSON is parsed and returned in state."""
         state = grill_state()
         ui = make_ui()
         ui.grill_question.return_value = "accepted"
         ws = Path(state["project_dir"]) / "workspace"
 
-        side_effect = _make_conversation_side_effect(
-            QUESTION_RESPONSES[:1], DONE_RESPONSE, GRILL_FEATURE_SPEC, ws
-        )
+        side_effect = _make_conversation_side_effect(QUESTION_RESPONSES[:1], DONE_RESPONSE, GRILL_FEATURE_SPEC, ws)
         mock_agent = AsyncMock(side_effect=side_effect)
         with patch("kindle.stages.grill.run_agent", mock_agent):
             result = await grill_node(state, ui)
@@ -569,9 +509,7 @@ class TestCompilePhase:
         assert "task CRUD" in result["feature_spec"]["core_features"]
 
     @pytest.mark.asyncio
-    async def test_malformed_feature_spec_returns_empty_dict(
-        self, tmp_path: Path, grill_state, make_ui
-    ) -> None:
+    async def test_malformed_feature_spec_returns_empty_dict(self, tmp_path: Path, grill_state, make_ui) -> None:
         """If feature_spec.json is invalid JSON, return an empty dict."""
         state = grill_state()
         ui = make_ui()
@@ -598,9 +536,7 @@ class TestCompilePhase:
         assert result["feature_spec"] == {}
 
     @pytest.mark.asyncio
-    async def test_missing_feature_spec_returns_empty_dict(
-        self, tmp_path: Path, grill_state, make_ui
-    ) -> None:
+    async def test_missing_feature_spec_returns_empty_dict(self, tmp_path: Path, grill_state, make_ui) -> None:
         """If agent fails to create feature_spec.json, return an empty dict."""
         state = grill_state()
         ui = make_ui()
@@ -625,9 +561,7 @@ class TestCompilePhase:
         assert result["feature_spec"] == {}
 
     @pytest.mark.asyncio
-    async def test_no_stack_preference_shows_choose_best_fit(
-        self, tmp_path: Path, grill_state, make_ui
-    ) -> None:
+    async def test_no_stack_preference_shows_choose_best_fit(self, tmp_path: Path, grill_state, make_ui) -> None:
         """When stack_preference is empty, compile prompt says 'choose the best fit'."""
         state = grill_state(stack_preference="")
         ui = make_ui()
@@ -642,9 +576,7 @@ class TestCompilePhase:
         assert "None — choose the best fit" in compile_kwargs["user_prompt"]
 
     @pytest.mark.asyncio
-    async def test_compile_info_message_shown(
-        self, tmp_path: Path, grill_state, make_ui
-    ) -> None:
+    async def test_compile_info_message_shown(self, tmp_path: Path, grill_state, make_ui) -> None:
         """User sees an info message about spec compilation."""
         state = grill_state()
         ui = make_ui()
@@ -655,9 +587,7 @@ class TestCompilePhase:
         with patch("kindle.stages.grill.run_agent", mock_agent):
             await grill_node(state, ui)
 
-        ui.info.assert_any_call(
-            "Compiling feature specification from conversation..."
-        )
+        ui.info.assert_any_call("Compiling feature specification from conversation...")
 
 
 # ---------------------------------------------------------------------------
@@ -669,9 +599,7 @@ class TestAutoApprove:
     """When auto_approve is True, recommended answers are used without prompting."""
 
     @pytest.mark.asyncio
-    async def test_auto_approve_uses_recommended_answers(
-        self, tmp_path: Path, grill_state, make_ui
-    ) -> None:
+    async def test_auto_approve_uses_recommended_answers(self, tmp_path: Path, grill_state, make_ui) -> None:
         """In auto-approve, UI.grill_question still gets called (UI returns recommended)."""
         state = grill_state()
         ui = make_ui(auto_approve=True)
@@ -679,9 +607,7 @@ class TestAutoApprove:
         ui.grill_question.side_effect = lambda **kwargs: kwargs["recommended"]
         ws = Path(state["project_dir"]) / "workspace"
 
-        side_effect = _make_conversation_side_effect(
-            QUESTION_RESPONSES, DONE_RESPONSE, GRILL_FEATURE_SPEC, ws
-        )
+        side_effect = _make_conversation_side_effect(QUESTION_RESPONSES, DONE_RESPONSE, GRILL_FEATURE_SPEC, ws)
         mock_agent = AsyncMock(side_effect=side_effect)
         with patch("kindle.stages.grill.run_agent", mock_agent):
             result = await grill_node(state, ui)
@@ -692,18 +618,14 @@ class TestAutoApprove:
             assert f"Answer:** {q['recommended_answer']}" in transcript
 
     @pytest.mark.asyncio
-    async def test_auto_approve_all_questions_answered(
-        self, tmp_path: Path, grill_state, make_ui
-    ) -> None:
+    async def test_auto_approve_all_questions_answered(self, tmp_path: Path, grill_state, make_ui) -> None:
         """All questions should be answered when in auto-approve mode."""
         state = grill_state()
         ui = make_ui(auto_approve=True)
         ui.grill_question.side_effect = lambda **kwargs: kwargs["recommended"]
         ws = Path(state["project_dir"]) / "workspace"
 
-        side_effect = _make_conversation_side_effect(
-            QUESTION_RESPONSES, DONE_RESPONSE, {}, ws
-        )
+        side_effect = _make_conversation_side_effect(QUESTION_RESPONSES, DONE_RESPONSE, {}, ws)
         mock_agent = AsyncMock(side_effect=side_effect)
         with patch("kindle.stages.grill.run_agent", mock_agent):
             await grill_node(state, ui)
@@ -720,9 +642,7 @@ class TestDoneEarlyExit:
     """When the user types 'done', agent wraps up with assumptions."""
 
     @pytest.mark.asyncio
-    async def test_done_triggers_wrap_up(
-        self, tmp_path: Path, grill_state, make_ui
-    ) -> None:
+    async def test_done_triggers_wrap_up(self, tmp_path: Path, grill_state, make_ui) -> None:
         """Typing 'done' on Q1 triggers a wrap-up agent call."""
         state = grill_state()
         ui = make_ui()
@@ -750,16 +670,12 @@ class TestDoneEarlyExit:
         with patch("kindle.stages.grill.run_agent", mock_agent):
             result = await grill_node(state, ui)
 
-        ui.info.assert_any_call(
-            "User requested early exit — agent will fill remaining gaps with assumptions."
-        )
+        ui.info.assert_any_call("User requested early exit — agent will fill remaining gaps with assumptions.")
         # Only one grill_question call (Q1)
         assert ui.grill_question.call_count == 1
 
     @pytest.mark.asyncio
-    async def test_done_records_assumptions_in_transcript(
-        self, tmp_path: Path, grill_state, make_ui
-    ) -> None:
+    async def test_done_records_assumptions_in_transcript(self, tmp_path: Path, grill_state, make_ui) -> None:
         """After user says 'done', assumptions from the wrap-up are in transcript."""
         state = grill_state()
         ui = make_ui()
@@ -790,9 +706,7 @@ class TestDoneEarlyExit:
             assert assumption in transcript
 
     @pytest.mark.asyncio
-    async def test_done_on_second_question(
-        self, tmp_path: Path, grill_state, make_ui
-    ) -> None:
+    async def test_done_on_second_question(self, tmp_path: Path, grill_state, make_ui) -> None:
         """Typing 'done' on Q2 keeps Q1's answer and triggers wrap-up."""
         state = grill_state()
         ui = make_ui()
@@ -826,9 +740,7 @@ class TestDoneEarlyExit:
         assert ui.grill_question.call_count == 2
 
     @pytest.mark.asyncio
-    async def test_done_case_insensitive(
-        self, tmp_path: Path, grill_state, make_ui
-    ) -> None:
+    async def test_done_case_insensitive(self, tmp_path: Path, grill_state, make_ui) -> None:
         """'Done', 'DONE', 'done' all trigger early exit."""
         state = grill_state()
         ui = make_ui()
@@ -853,9 +765,7 @@ class TestDoneEarlyExit:
         with patch("kindle.stages.grill.run_agent", mock_agent):
             await grill_node(state, ui)
 
-        ui.info.assert_any_call(
-            "User requested early exit — agent will fill remaining gaps with assumptions."
-        )
+        ui.info.assert_any_call("User requested early exit — agent will fill remaining gaps with assumptions.")
         assert ui.grill_question.call_count == 1
 
 
@@ -868,42 +778,32 @@ class TestArtifactSaving:
     """Tests for save_artifact calls — grill_transcript.md and feature_spec.json."""
 
     @pytest.mark.asyncio
-    async def test_grill_transcript_saved(
-        self, tmp_path: Path, grill_state, make_ui
-    ) -> None:
+    async def test_grill_transcript_saved(self, tmp_path: Path, grill_state, make_ui) -> None:
         """grill_transcript.md is saved as an artifact."""
         state = grill_state()
         ui = make_ui()
         ui.grill_question.return_value = "answer"
         ws = Path(state["project_dir"]) / "workspace"
 
-        side_effect = _make_conversation_side_effect(
-            QUESTION_RESPONSES[:1], DONE_RESPONSE, {}, ws
-        )
+        side_effect = _make_conversation_side_effect(QUESTION_RESPONSES[:1], DONE_RESPONSE, {}, ws)
         mock_agent = AsyncMock(side_effect=side_effect)
         with patch("kindle.stages.grill.run_agent", mock_agent):
             await grill_node(state, ui)
 
-        transcript_path = (
-            Path(state["project_dir"]) / "artifacts" / "grill_transcript.md"
-        )
+        transcript_path = Path(state["project_dir"]) / "artifacts" / "grill_transcript.md"
         assert transcript_path.exists()
         content = transcript_path.read_text()
         assert "Q1 [core_functionality]" in content
         assert "answer" in content
 
     @pytest.mark.asyncio
-    async def test_feature_spec_json_saved(
-        self, tmp_path: Path, grill_state, make_ui
-    ) -> None:
+    async def test_feature_spec_json_saved(self, tmp_path: Path, grill_state, make_ui) -> None:
         """feature_spec.json is saved as a formatted artifact."""
         state = grill_state()
         ui = make_ui()
         ws = Path(state["project_dir"]) / "workspace"
 
-        side_effect = _make_conversation_side_effect(
-            [], DONE_RESPONSE, GRILL_FEATURE_SPEC, ws
-        )
+        side_effect = _make_conversation_side_effect([], DONE_RESPONSE, GRILL_FEATURE_SPEC, ws)
         mock_agent = AsyncMock(side_effect=side_effect)
         with patch("kindle.stages.grill.run_agent", mock_agent):
             await grill_node(state, ui)
@@ -914,9 +814,7 @@ class TestArtifactSaving:
         assert saved_spec == GRILL_FEATURE_SPEC
 
     @pytest.mark.asyncio
-    async def test_empty_spec_saved_as_empty_dict(
-        self, tmp_path: Path, grill_state, make_ui
-    ) -> None:
+    async def test_empty_spec_saved_as_empty_dict(self, tmp_path: Path, grill_state, make_ui) -> None:
         """When feature_spec.json is missing, an empty dict is saved."""
         state = grill_state()
         ui = make_ui()
@@ -942,9 +840,7 @@ class TestArtifactSaving:
         assert json.loads(spec_path.read_text()) == {}
 
     @pytest.mark.asyncio
-    async def test_temp_files_cleaned_up(
-        self, tmp_path: Path, grill_state, make_ui
-    ) -> None:
+    async def test_temp_files_cleaned_up(self, tmp_path: Path, grill_state, make_ui) -> None:
         """open_questions.json and feature_spec.json are removed from workspace."""
         state = grill_state()
         ui = make_ui()
@@ -968,9 +864,7 @@ class TestStateReturn:
     """Tests for the returned state dictionary."""
 
     @pytest.mark.asyncio
-    async def test_returns_required_keys(
-        self, tmp_path: Path, grill_state, make_ui
-    ) -> None:
+    async def test_returns_required_keys(self, tmp_path: Path, grill_state, make_ui) -> None:
         """Return dict must contain feature_spec, grill_transcript, current_stage."""
         state = grill_state()
         ui = make_ui()
@@ -986,9 +880,7 @@ class TestStateReturn:
         assert "current_stage" in result
 
     @pytest.mark.asyncio
-    async def test_current_stage_is_grill(
-        self, tmp_path: Path, grill_state, make_ui
-    ) -> None:
+    async def test_current_stage_is_grill(self, tmp_path: Path, grill_state, make_ui) -> None:
         """current_stage is always 'grill' after this node runs."""
         state = grill_state()
         ui = make_ui()
@@ -1002,9 +894,7 @@ class TestStateReturn:
         assert result["current_stage"] == "grill"
 
     @pytest.mark.asyncio
-    async def test_feature_spec_is_dict(
-        self, tmp_path: Path, grill_state, make_ui
-    ) -> None:
+    async def test_feature_spec_is_dict(self, tmp_path: Path, grill_state, make_ui) -> None:
         """feature_spec is always a dict, even on parse failure."""
         state = grill_state()
         ui = make_ui()
@@ -1029,9 +919,7 @@ class TestStateReturn:
         assert isinstance(result["feature_spec"], dict)
 
     @pytest.mark.asyncio
-    async def test_grill_transcript_is_string(
-        self, tmp_path: Path, grill_state, make_ui
-    ) -> None:
+    async def test_grill_transcript_is_string(self, tmp_path: Path, grill_state, make_ui) -> None:
         """grill_transcript is always a string."""
         state = grill_state()
         ui = make_ui()
@@ -1045,9 +933,7 @@ class TestStateReturn:
         assert isinstance(result["grill_transcript"], str)
 
     @pytest.mark.asyncio
-    async def test_only_three_keys_returned(
-        self, tmp_path: Path, grill_state, make_ui
-    ) -> None:
+    async def test_only_three_keys_returned(self, tmp_path: Path, grill_state, make_ui) -> None:
         """Return dict has exactly three keys — nothing extra leaking."""
         state = grill_state()
         ui = make_ui()
@@ -1074,9 +960,7 @@ class TestStageLifecycle:
     """Tests for UI stage lifecycle calls and mark_stage_complete."""
 
     @pytest.mark.asyncio
-    async def test_stage_start_and_done_called(
-        self, tmp_path: Path, grill_state, make_ui
-    ) -> None:
+    async def test_stage_start_and_done_called(self, tmp_path: Path, grill_state, make_ui) -> None:
         """ui.stage_start('grill') and ui.stage_done('grill') bracket the node."""
         state = grill_state()
         ui = make_ui()
@@ -1091,9 +975,7 @@ class TestStageLifecycle:
         ui.stage_done.assert_called_once_with("grill")
 
     @pytest.mark.asyncio
-    async def test_mark_stage_complete_called(
-        self, tmp_path: Path, grill_state, make_ui
-    ) -> None:
+    async def test_mark_stage_complete_called(self, tmp_path: Path, grill_state, make_ui) -> None:
         """mark_stage_complete updates metadata.json with 'grill'."""
         state = grill_state()
         ui = make_ui()
@@ -1108,9 +990,7 @@ class TestStageLifecycle:
         assert "grill" in meta["stages_completed"]
 
     @pytest.mark.asyncio
-    async def test_conversation_calls_plus_compile(
-        self, tmp_path: Path, grill_state, make_ui
-    ) -> None:
+    async def test_conversation_calls_plus_compile(self, tmp_path: Path, grill_state, make_ui) -> None:
         """run_agent is called N+1 times: N conversation turns + done + compile."""
         state = grill_state()
         ui = make_ui()
@@ -1118,9 +998,7 @@ class TestStageLifecycle:
         ws = Path(state["project_dir"]) / "workspace"
 
         n_questions = 2
-        side_effect = _make_conversation_side_effect(
-            QUESTION_RESPONSES[:n_questions], DONE_RESPONSE, {}, ws
-        )
+        side_effect = _make_conversation_side_effect(QUESTION_RESPONSES[:n_questions], DONE_RESPONSE, {}, ws)
         mock_agent = AsyncMock(side_effect=side_effect)
         with patch("kindle.stages.grill.run_agent", mock_agent):
             await grill_node(state, ui)
@@ -1129,18 +1007,14 @@ class TestStageLifecycle:
         assert mock_agent.call_count == n_questions + 2
 
     @pytest.mark.asyncio
-    async def test_model_passed_through_to_agent(
-        self, tmp_path: Path, grill_state, make_ui
-    ) -> None:
+    async def test_model_passed_through_to_agent(self, tmp_path: Path, grill_state, make_ui) -> None:
         """state['model'] is forwarded to all run_agent calls."""
         state = grill_state(model="claude-sonnet-4-20250514")
         ui = make_ui()
         ui.grill_question.return_value = "ok"
         ws = Path(state["project_dir"]) / "workspace"
 
-        side_effect = _make_conversation_side_effect(
-            QUESTION_RESPONSES[:1], DONE_RESPONSE, {}, ws
-        )
+        side_effect = _make_conversation_side_effect(QUESTION_RESPONSES[:1], DONE_RESPONSE, {}, ws)
         mock_agent = AsyncMock(side_effect=side_effect)
         with patch("kindle.stages.grill.run_agent", mock_agent):
             await grill_node(state, ui)
@@ -1149,18 +1023,14 @@ class TestStageLifecycle:
             assert c.kwargs["model"] == "claude-sonnet-4-20250514"
 
     @pytest.mark.asyncio
-    async def test_grill_complete_info_message(
-        self, tmp_path: Path, grill_state, make_ui
-    ) -> None:
+    async def test_grill_complete_info_message(self, tmp_path: Path, grill_state, make_ui) -> None:
         """Info message shown when grill completes with confidence."""
         state = grill_state()
         ui = make_ui()
         ui.grill_question.return_value = "ok"
         ws = Path(state["project_dir"]) / "workspace"
 
-        side_effect = _make_conversation_side_effect(
-            QUESTION_RESPONSES[:1], DONE_RESPONSE, {}, ws
-        )
+        side_effect = _make_conversation_side_effect(QUESTION_RESPONSES[:1], DONE_RESPONSE, {}, ws)
         mock_agent = AsyncMock(side_effect=side_effect)
         with patch("kindle.stages.grill.run_agent", mock_agent):
             await grill_node(state, ui)
@@ -1168,18 +1038,14 @@ class TestStageLifecycle:
         ui.info.assert_any_call("Grill complete after 1 questions (confidence: high).")
 
     @pytest.mark.asyncio
-    async def test_stage_tags_increment(
-        self, tmp_path: Path, grill_state, make_ui
-    ) -> None:
+    async def test_stage_tags_increment(self, tmp_path: Path, grill_state, make_ui) -> None:
         """Each conversation turn uses an incrementing stage tag like grill_q1, grill_q2."""
         state = grill_state()
         ui = make_ui()
         ui.grill_question.return_value = "ok"
         ws = Path(state["project_dir"]) / "workspace"
 
-        side_effect = _make_conversation_side_effect(
-            QUESTION_RESPONSES[:2], DONE_RESPONSE, {}, ws
-        )
+        side_effect = _make_conversation_side_effect(QUESTION_RESPONSES[:2], DONE_RESPONSE, {}, ws)
         mock_agent = AsyncMock(side_effect=side_effect)
         with patch("kindle.stages.grill.run_agent", mock_agent):
             await grill_node(state, ui)

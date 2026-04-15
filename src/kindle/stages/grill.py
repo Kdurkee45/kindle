@@ -183,9 +183,7 @@ def _build_history_prompt(idea: str, stack_pref: str, history: list[dict]) -> st
         for entry in history:
             if entry["role"] == "agent":
                 data = entry["data"]
-                parts.append(
-                    f"\nQ{entry['turn']} [{data.get('category', '?')}]: {data.get('question', '?')}"
-                )
+                parts.append(f"\nQ{entry['turn']} [{data.get('category', '?')}]: {data.get('question', '?')}")
                 parts.append(f"  Recommended: {data.get('recommended_answer', '?')}")
                 parts.append(f"  Why asked: {data.get('why_asking', '?')}")
             elif entry["role"] == "user":
@@ -224,7 +222,6 @@ async def _ask_one_question(
     return _parse_agent_response(result.text)
 
 
-
 def _append_assumptions(transcript_lines: list[str], assumptions: list[str]) -> None:
     """Append assumption lines to transcript."""
     if assumptions:
@@ -235,7 +232,10 @@ def _append_assumptions(transcript_lines: list[str], assumptions: list[str]) -> 
 
 
 def _handle_done_response(
-    response: dict, turn: int, transcript_lines: list[str], ui: UI,
+    response: dict,
+    turn: int,
+    transcript_lines: list[str],
+    ui: UI,
 ) -> tuple[str, list[str]]:
     """Handle agent 'done' status — returns (summary, assumptions)."""
     done_summary = response.get("summary", "")
@@ -272,7 +272,6 @@ def _record_question_in_transcript(
     transcript_lines.append("")
 
 
-
 async def _handle_early_exit(
     history: list[dict],
     response: dict,
@@ -288,13 +287,17 @@ async def _handle_early_exit(
     """Handle user typing 'done' — wrap up with assumptions."""
     ui.info("User requested early exit — agent will fill remaining gaps with assumptions.")
     history.append({"role": "agent", "data": response, "turn": turn})
-    early_exit_msg = (
-        "I'm done answering questions. "
-        "Fill in any remaining gaps with your best judgment and wrap up."
-    )
+    early_exit_msg = "I'm done answering questions. Fill in any remaining gaps with your best judgment and wrap up."
     history.append({"role": "user", "answer": early_exit_msg})
     wrap_up = await _ask_one_question(
-        idea, stack_pref, history, str(ws), project_dir, ui, state.get("model"), turn + 1,
+        idea,
+        stack_pref,
+        history,
+        str(ws),
+        project_dir,
+        ui,
+        state.get("model"),
+        turn + 1,
     )
     _done_summary = ""
     assumptions: list[str] = []
@@ -332,7 +335,14 @@ async def grill_node(state: KindleState, ui: UI) -> dict:
     for turn in range(1, MAX_QUESTIONS + 1):
         # Agent decides what to ask next (or that it's done)
         response = await _ask_one_question(
-            idea, stack_pref, history, str(ws), project_dir, ui, state.get("model"), turn,
+            idea,
+            stack_pref,
+            history,
+            str(ws),
+            project_dir,
+            ui,
+            state.get("model"),
+            turn,
         )
 
         if response.get("status") == "error":
@@ -341,7 +351,10 @@ async def grill_node(state: KindleState, ui: UI) -> dict:
 
         if response.get("status") == "done":
             _done_summary, assumptions = _handle_done_response(
-                response, turn, transcript_lines, ui,
+                response,
+                turn,
+                transcript_lines,
+                ui,
             )
             break
 
@@ -367,8 +380,16 @@ async def grill_node(state: KindleState, ui: UI) -> dict:
         # Check for early exit
         if answer.lower() == "done":
             _done_summary, assumptions = await _handle_early_exit(
-                history, response, turn, idea, stack_pref,
-                ws, project_dir, ui, state, transcript_lines,
+                history,
+                response,
+                turn,
+                idea,
+                stack_pref,
+                ws,
+                project_dir,
+                ui,
+                state,
+                transcript_lines,
             )
             break
 
@@ -378,16 +399,24 @@ async def grill_node(state: KindleState, ui: UI) -> dict:
 
         # Record in transcript
         _record_question_in_transcript(
-            transcript_lines, turn, category, question, why_asking, recommended, answer,
+            transcript_lines,
+            turn,
+            category,
+            question,
+            why_asking,
+            recommended,
+            answer,
         )
 
-        decisions.append({
-            "question": question,
-            "recommended": recommended,
-            "answer": answer,
-            "category": category,
-            "why_asking": why_asking,
-        })
+        decisions.append(
+            {
+                "question": question,
+                "recommended": recommended,
+                "answer": answer,
+                "category": category,
+                "why_asking": why_asking,
+            }
+        )
 
     grill_transcript = "\n".join(transcript_lines)
     save_artifact(project_dir, "grill_transcript.md", grill_transcript)
