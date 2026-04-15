@@ -40,3 +40,4 @@ htmlcov/
 .ruff_cache/
 coverage.json
 coverage_report.json
+coverage_final.json

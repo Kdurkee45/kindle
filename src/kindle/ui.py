@@ -11,6 +11,8 @@ from rich.console import Console
 from rich.panel import Panel
 from rich.table import Table
 
+MAX_QUESTIONS = 25  # Matches grill.py
+
 STAGE_LABELS = {
     "grill": "🔥 Grill",
     "research": "🔬 Research",
@@ -92,13 +94,24 @@ class UI:
         )
         self._safe_print()
 
-    def grill_question(self, question: str, recommended: str, category: str, number: int) -> str:
+    def grill_question(
+        self,
+        question: str,
+        recommended: str,
+        category: str,
+        number: int,
+        why_asking: str = "",
+    ) -> str:
         """Present a Grill question and return the human's answer."""
         self._safe_print()
+        body = f"[bold]{question}[/bold]\n"
+        if why_asking:
+            body += f"\n[italic dim]Why I'm asking: {why_asking}[/italic dim]\n"
+        body += f"\n[cyan]My recommendation:[/cyan] {recommended}"
         self._safe_print(
             Panel(
-                f"[bold]{question}[/bold]\n\n[dim]Category: {category}[/dim]\n[cyan]Recommended:[/cyan] {recommended}",
-                title=f"[bold magenta]Question {number}[/bold magenta]",
+                body,
+                title=f"[bold magenta]Grill ({number}/~{MAX_QUESTIONS})[/bold magenta]",
                 border_style="magenta",
                 box=box.ROUNDED,
                 padding=(1, 2),
