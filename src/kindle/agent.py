@@ -10,6 +10,7 @@ from typing import Any
 from claude_agent_sdk import ClaudeAgentOptions, query
 
 from kindle import artifacts
+from kindle.guardrails import make_guardrail_hooks
 from kindle.ui import UI
 
 MAX_RETRIES = 3
@@ -92,6 +93,9 @@ async def run_agent(
         # project files. The trust boundary is the project workspace directory (cwd),
         # and the user explicitly invokes kindle to generate code. See audit finding M2.
         permission_mode="bypassPermissions",
+        # Guardrails: block dangerous Bash commands (e.g., `find /` which hangs
+        # for 30+ minutes traversing the entire filesystem).
+        hooks=make_guardrail_hooks(),
     )
     if model:
         options_kwargs["model"] = model
