@@ -769,9 +769,7 @@ class TestDoneEarlyExit:
         assert ui.grill_question.call_count == 1
 
     @pytest.mark.asyncio
-    async def test_done_wrap_up_returns_non_done_status(
-        self, tmp_path: Path, grill_state, make_ui
-    ) -> None:
+    async def test_done_wrap_up_returns_non_done_status(self, tmp_path: Path, grill_state, make_ui) -> None:
         """When wrap-up agent returns a question instead of 'done', no crash occurs."""
         state = grill_state()
         ui = make_ui()
@@ -812,9 +810,7 @@ class TestDoneEarlyExit:
         assert "User ended conversation at Q1" in transcript
 
     @pytest.mark.asyncio
-    async def test_done_records_triggering_question_in_transcript(
-        self, tmp_path: Path, grill_state, make_ui
-    ) -> None:
+    async def test_done_records_triggering_question_in_transcript(self, tmp_path: Path, grill_state, make_ui) -> None:
         """When user says 'done', the triggering question is recorded in transcript."""
         state = grill_state()
         ui = make_ui()
@@ -854,9 +850,7 @@ class TestMaxQuestionsBoundary:
     """Tests for behavior when the agent asks all MAX_QUESTIONS without saying done."""
 
     @pytest.mark.asyncio
-    async def test_max_questions_exhausted(
-        self, tmp_path: Path, grill_state, make_ui
-    ) -> None:
+    async def test_max_questions_exhausted(self, tmp_path: Path, grill_state, make_ui) -> None:
         """When agent never says 'done', loop exits after MAX_QUESTIONS."""
         from kindle.stages.grill import MAX_QUESTIONS
 
@@ -898,9 +892,7 @@ class TestMaxQuestionsBoundary:
         # Transcript should note the boundary
         assert f"Reached maximum {MAX_QUESTIONS} questions" in result["grill_transcript"]
         # Info message should be shown
-        ui.info.assert_any_call(
-            f"Reached maximum {MAX_QUESTIONS} questions. Compiling spec."
-        )
+        ui.info.assert_any_call(f"Reached maximum {MAX_QUESTIONS} questions. Compiling spec.")
 
 
 # ---------------------------------------------------------------------------
