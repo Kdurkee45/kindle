@@ -13,6 +13,7 @@ questions are informed by earlier ones.
 from __future__ import annotations
 
 import json
+from typing import Any
 
 from kindle.agent import run_agent
 from kindle.artifacts import mark_stage_complete, save_artifact
@@ -131,7 +132,7 @@ Write the file to the current working directory.
 """
 
 
-def _parse_agent_response(text: str) -> dict:
+def _parse_agent_response(text: str) -> dict[str, Any]:
     """Extract JSON from the agent's response text.
 
     The agent should respond with pure JSON, but sometimes wraps it in
@@ -141,7 +142,8 @@ def _parse_agent_response(text: str) -> dict:
 
     # Try direct parse first
     try:
-        return json.loads(text)
+        result: dict[str, Any] = json.loads(text)
+        return result
     except json.JSONDecodeError:
         pass
 
@@ -151,7 +153,8 @@ def _parse_agent_response(text: str) -> dict:
             start = text.index(marker) + len(marker)
             end = text.index("```", start) if "```" in text[start:] else len(text)
             try:
-                return json.loads(text[start:end].strip())
+                result = json.loads(text[start:end].strip())
+                return result
             except json.JSONDecodeError:
                 pass
 
@@ -160,7 +163,8 @@ def _parse_agent_response(text: str) -> dict:
     last_brace = text.rfind("}")
     if first_brace != -1 and last_brace > first_brace:
         try:
-            return json.loads(text[first_brace : last_brace + 1])
+            result = json.loads(text[first_brace : last_brace + 1])
+            return result
         except json.JSONDecodeError:
             pass
 
