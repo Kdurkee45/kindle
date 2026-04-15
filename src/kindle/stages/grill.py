@@ -55,7 +55,8 @@ When you need to ask a question:
 {
   "status": "question",
   "question": "Your question here",
-  "category": "core_functionality|user_model|data_model|tech|scope|design|platform|integration|workflow|auth|api|deployment",
+  "category": "core_functionality|user_model|data_model|tech|scope|
+              design|platform|integration|workflow|auth|api|deployment",
   "recommended_answer": "Your recommendation based on what you've heard so far",
   "why_asking": "Brief explanation of why this matters for the build"
 }
@@ -223,6 +224,89 @@ async def _ask_one_question(
     return _parse_agent_response(result.text)
 
 
+
+def _append_assumptions(transcript_lines: list[str], assumptions: list[str]) -> None:
+    """Append assumption lines to transcript."""
+    if assumptions:
+        transcript_lines.append("")
+        transcript_lines.append("**Assumptions:**")
+        for a in assumptions:
+            transcript_lines.append(f"- {a}")
+
+
+def _handle_done_response(
+    response: dict, turn: int, transcript_lines: list[str], ui: UI,
+) -> tuple[str, list[str]]:
+    """Handle agent 'done' status — returns (summary, assumptions)."""
+    done_summary = response.get("summary", "")
+    assumptions = response.get("assumptions", [])
+    confidence = response.get("confidence", "medium")
+    transcript_lines.append(f"**Agent concluded after {turn - 1} questions.**")
+    transcript_lines.append("")
+    transcript_lines.append(f"**Summary:** {done_summary}")
+    transcript_lines.append(f"**Confidence:** {confidence}")
+    _append_assumptions(transcript_lines, assumptions)
+    ui.info(f"Grill complete after {turn - 1} questions (confidence: {confidence}).")
+    return done_summary, assumptions
+
+
+def _record_question_in_transcript(
+    transcript_lines: list[str],
+    turn: int,
+    category: str,
+    question: str,
+    why_asking: str,
+    recommended: str,
+    answer: str,
+) -> None:
+    """Append a Q&A exchange to the transcript."""
+    transcript_lines.append(f"### Q{turn} [{category}]")
+    transcript_lines.append("")
+    transcript_lines.append(f"**{question}**")
+    transcript_lines.append("")
+    transcript_lines.append(f"*Why I'm asking: {why_asking}*")
+    transcript_lines.append("")
+    transcript_lines.append(f"Recommended: {recommended}")
+    transcript_lines.append("")
+    transcript_lines.append(f"**Answer:** {answer}")
+    transcript_lines.append("")
+
+
+
+async def _handle_early_exit(
+    history: list[dict],
+    response: dict,
+    turn: int,
+    idea: str,
+    stack_pref: str,
+    ws: object,
+    project_dir: str,
+    ui: UI,
+    state: KindleState,
+    transcript_lines: list[str],
+) -> tuple[str, list[str]]:
+    """Handle user typing 'done' — wrap up with assumptions."""
+    ui.info("User requested early exit — agent will fill remaining gaps with assumptions.")
+    history.append({"role": "agent", "data": response, "turn": turn})
+    early_exit_msg = (
+        "I'm done answering questions. "
+        "Fill in any remaining gaps with your best judgment and wrap up."
+    )
+    history.append({"role": "user", "answer": early_exit_msg})
+    wrap_up = await _ask_one_question(
+        idea, stack_pref, history, str(ws), project_dir, ui, state.get("model"), turn + 1,
+    )
+    _done_summary = ""
+    assumptions: list[str] = []
+    if wrap_up.get("status") == "done":
+        done_summary = wrap_up.get("summary", "")
+        assumptions = wrap_up.get("assumptions", [])
+
+    transcript_lines.append(f"**User ended conversation at Q{turn}. Agent filled gaps.**")
+    _append_assumptions(transcript_lines, assumptions)
+    return done_summary, assumptions
+
+
 async def grill_node(state: KindleState, ui: UI) -> dict:
     """LangGraph node: adaptive conversational interrogation."""
     project_dir, ws = stage_setup(state, ui, "grill")
@@ -232,18 +316,18 @@ async def grill_node(state: KindleState, ui: UI) -> dict:
 
     history: list[dict] = []
     transcript_lines: list[str] = [
-        f"# Grill Transcript",
-        f"",
+        "# Grill Transcript",
+        "",
         f"**Idea:** {idea}",
         f"**Stack preference:** {stack_pref or 'None'}",
         f"**Mode:** {'auto-approve' if auto_approve else 'interactive'}",
-        f"",
-        f"---",
-        f"",
+        "",
+        "---",
+        "",
     ]
     decisions: list[dict] = []
     assumptions: list[str] = []
-    done_summary = ""
+    _done_summary = ""
 
     for turn in range(1, MAX_QUESTIONS + 1):
         # Agent decides what to ask next (or that it's done)
@@ -256,19 +340,9 @@ async def grill_node(state: KindleState, ui: UI) -> dict:
             break
 
         if response.get("status") == "done":
-            done_summary = response.get("summary", "")
-            assumptions = response.get("assumptions", [])
-            confidence = response.get("confidence", "medium")
-            transcript_lines.append(f"**Agent concluded after {turn - 1} questions.**")
-            transcript_lines.append(f"")
-            transcript_lines.append(f"**Summary:** {done_summary}")
-            transcript_lines.append(f"**Confidence:** {confidence}")
-            if assumptions:
-                transcript_lines.append(f"")
-                transcript_lines.append(f"**Assumptions:**")
-                for a in assumptions:
-                    transcript_lines.append(f"- {a}")
-            ui.info(f"Grill complete after {turn - 1} questions (confidence: {confidence}).")
+            _done_summary, assumptions = _handle_done_response(
+                response, turn, transcript_lines, ui,
+            )
             break
 
         # Extract question data
@@ -292,23 +366,10 @@ async def grill_node(state: KindleState, ui: UI) -> dict:
 
         # Check for early exit
         if answer.lower() == "done":
-            ui.info("User requested early exit — agent will fill remaining gaps with assumptions.")
-            # One more agent call to wrap up with assumptions
-            history.append({"role": "agent", "data": response, "turn": turn})
-            history.append({"role": "user", "answer": "I'm done answering questions. Fill in any remaining gaps with your best judgment and wrap up."})
-            wrap_up = await _ask_one_question(
-                idea, stack_pref, history, str(ws), project_dir, ui, state.get("model"), turn + 1,
+            _done_summary, assumptions = await _handle_early_exit(
+                history, response, turn, idea, stack_pref,
+                ws, project_dir, ui, state, transcript_lines,
             )
-            if wrap_up.get("status") == "done":
-                done_summary = wrap_up.get("summary", "")
-                assumptions = wrap_up.get("assumptions", [])
-
-            transcript_lines.append(f"**User ended conversation at Q{turn}. Agent filled gaps.**")
-            if assumptions:
-                transcript_lines.append(f"")
-                transcript_lines.append(f"**Assumptions:**")
-                for a in assumptions:
-                    transcript_lines.append(f"- {a}")
             break
 
         # Record in history
@@ -316,16 +377,9 @@ async def grill_node(state: KindleState, ui: UI) -> dict:
         history.append({"role": "user", "answer": answer})
 
         # Record in transcript
-        transcript_lines.append(f"### Q{turn} [{category}]")
-        transcript_lines.append(f"")
-        transcript_lines.append(f"**{question}**")
-        transcript_lines.append(f"")
-        transcript_lines.append(f"*Why I'm asking: {why_asking}*")
-        transcript_lines.append(f"")
-        transcript_lines.append(f"Recommended: {recommended}")
-        transcript_lines.append(f"")
-        transcript_lines.append(f"**Answer:** {answer}")
-        transcript_lines.append(f"")
+        _record_question_in_transcript(
+            transcript_lines, turn, category, question, why_asking, recommended, answer,
+        )
 
         decisions.append({
             "question": question,
@@ -348,7 +402,7 @@ async def grill_node(state: KindleState, ui: UI) -> dict:
         f"CONVERSATION TRANSCRIPT:\n{grill_transcript}\n\n"
         f"ASSUMPTIONS FROM INTERROGATOR:\n"
         + json.dumps(assumptions, indent=2)
-        + f"\n\nWrite feature_spec.json to the working directory."
+        + "\n\nWrite feature_spec.json to the working directory."
     )
 
     await run_agent(

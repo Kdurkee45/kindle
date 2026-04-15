@@ -9,9 +9,9 @@ from typing import Any
 from rich import box
 from rich.console import Console
 from rich.panel import Panel
+from rich.table import Table
 
 MAX_QUESTIONS = 25  # Matches grill.py
-from rich.table import Table
 
 STAGE_LABELS = {
     "grill": "🔥 Grill",
