@@ -768,6 +768,140 @@ class TestDoneEarlyExit:
         ui.info.assert_any_call("User requested early exit — agent will fill remaining gaps with assumptions.")
         assert ui.grill_question.call_count == 1
 
+    @pytest.mark.asyncio
+    async def test_done_wrap_up_returns_non_done_status(
+        self, tmp_path: Path, grill_state, make_ui
+    ) -> None:
+        """When wrap-up agent returns a question instead of 'done', no crash occurs."""
+        state = grill_state()
+        ui = make_ui()
+        ui.grill_question.return_value = "done"
+        ws = Path(state["project_dir"]) / "workspace"
+
+        non_done_wrap_up = {
+            "status": "question",
+            "question": "One more thing...",
+            "category": "scope",
+            "recommended_answer": "Yes",
+            "why_asking": "Just checking",
+        }
+
+        call_count = 0
+
+        async def side_effect(**kwargs):
+            nonlocal call_count
+            idx = call_count
+            call_count += 1
+            if idx == 0:
+                return _make_agent_result(QUESTION_RESPONSES[0])
+            if idx == 1:
+                # Wrap-up returns a question instead of done
+                return _make_agent_result(non_done_wrap_up)
+            ws.mkdir(parents=True, exist_ok=True)
+            (ws / "feature_spec.json").write_text("{}")
+            return MagicMock()
+
+        mock_agent = AsyncMock(side_effect=side_effect)
+        with patch("kindle.stages.grill.run_agent", mock_agent):
+            result = await grill_node(state, ui)
+
+        # Should not crash and should still produce a result
+        assert "feature_spec" in result
+        assert "grill_transcript" in result
+        transcript = result["grill_transcript"]
+        assert "User ended conversation at Q1" in transcript
+
+    @pytest.mark.asyncio
+    async def test_done_records_triggering_question_in_transcript(
+        self, tmp_path: Path, grill_state, make_ui
+    ) -> None:
+        """When user says 'done', the triggering question is recorded in transcript."""
+        state = grill_state()
+        ui = make_ui()
+        ui.grill_question.return_value = "done"
+        ws = Path(state["project_dir"]) / "workspace"
+
+        call_count = 0
+
+        async def side_effect(**kwargs):
+            nonlocal call_count
+            idx = call_count
+            call_count += 1
+            if idx == 0:
+                return _make_agent_result(QUESTION_RESPONSES[0])
+            if idx == 1:
+                return _make_agent_result(DONE_RESPONSE)
+            ws.mkdir(parents=True, exist_ok=True)
+            (ws / "feature_spec.json").write_text("{}")
+            return MagicMock()
+
+        mock_agent = AsyncMock(side_effect=side_effect)
+        with patch("kindle.stages.grill.run_agent", mock_agent):
+            result = await grill_node(state, ui)
+
+        transcript = result["grill_transcript"]
+        # The triggering question should appear in transcript
+        assert QUESTION_RESPONSES[0]["question"] in transcript
+        assert "(user ended early)" in transcript
+
+
+# ---------------------------------------------------------------------------
+# MAX_QUESTIONS boundary
+# ---------------------------------------------------------------------------
+
+
+class TestMaxQuestionsBoundary:
+    """Tests for behavior when the agent asks all MAX_QUESTIONS without saying done."""
+
+    @pytest.mark.asyncio
+    async def test_max_questions_exhausted(
+        self, tmp_path: Path, grill_state, make_ui
+    ) -> None:
+        """When agent never says 'done', loop exits after MAX_QUESTIONS."""
+        from kindle.stages.grill import MAX_QUESTIONS
+
+        state = grill_state()
+        ui = make_ui()
+        ui.grill_question.return_value = "ok"
+        ws = Path(state["project_dir"]) / "workspace"
+
+        # Agent always returns a question, never "done"
+        endless_question = {
+            "status": "question",
+            "question": "Tell me more?",
+            "category": "scope",
+            "recommended_answer": "More details",
+            "why_asking": "Need to understand better",
+        }
+
+        call_count = 0
+
+        async def side_effect(**kwargs):
+            nonlocal call_count
+            idx = call_count
+            call_count += 1
+            if idx < MAX_QUESTIONS:
+                return _make_agent_result(endless_question)
+            # Compile phase
+            ws.mkdir(parents=True, exist_ok=True)
+            (ws / "feature_spec.json").write_text("{}")
+            return MagicMock()
+
+        mock_agent = AsyncMock(side_effect=side_effect)
+        with patch("kindle.stages.grill.run_agent", mock_agent):
+            result = await grill_node(state, ui)
+
+        # Should complete without error
+        assert "feature_spec" in result
+        # Should have asked MAX_QUESTIONS questions
+        assert ui.grill_question.call_count == MAX_QUESTIONS
+        # Transcript should note the boundary
+        assert f"Reached maximum {MAX_QUESTIONS} questions" in result["grill_transcript"]
+        # Info message should be shown
+        ui.info.assert_any_call(
+            f"Reached maximum {MAX_QUESTIONS} questions. Compiling spec."
+        )
+
 
 # ---------------------------------------------------------------------------
 # Artifact saving

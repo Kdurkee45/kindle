@@ -13,6 +13,7 @@ questions are informed by earlier ones.
 from __future__ import annotations
 
 import json
+from pathlib import Path
 from typing import Any
 
 from kindle.agent import run_agent
@@ -220,7 +221,7 @@ async def _ask_one_question(
         ui=ui,
         model=model,
         max_turns=3,
-        allowed_tools=["Write"],
+        allowed_tools=["Read"],
     )
 
     return _parse_agent_response(result.text)
@@ -282,7 +283,7 @@ async def _handle_early_exit(
     turn: int,
     idea: str,
     stack_pref: str,
-    ws: object,
+    ws: Path,
     project_dir: str,
     ui: UI,
     state: KindleState,
@@ -303,12 +304,23 @@ async def _handle_early_exit(
         state.get("model"),
         turn + 1,
     )
-    _done_summary = ""
+    done_summary = ""
     assumptions: list[str] = []
     if wrap_up.get("status") == "done":
         done_summary = wrap_up.get("summary", "")
         assumptions = wrap_up.get("assumptions", [])
 
+    # Record the triggering question in transcript before the early-exit note
+    q_data = response
+    _record_question_in_transcript(
+        transcript_lines,
+        turn,
+        q_data.get("category", "general"),
+        q_data.get("question", ""),
+        q_data.get("why_asking", ""),
+        q_data.get("recommended_answer", ""),
+        "(user ended early)",
+    )
     transcript_lines.append(f"**User ended conversation at Q{turn}. Agent filled gaps.**")
     _append_assumptions(transcript_lines, assumptions)
     return done_summary, assumptions
@@ -332,9 +344,7 @@ async def grill_node(state: KindleState, ui: UI) -> dict:
         "---",
         "",
     ]
-    decisions: list[dict] = []
     assumptions: list[str] = []
-    _done_summary = ""
 
     for turn in range(1, MAX_QUESTIONS + 1):
         # Agent decides what to ask next (or that it's done)
@@ -354,7 +364,7 @@ async def grill_node(state: KindleState, ui: UI) -> dict:
             break
 
         if response.get("status") == "done":
-            _done_summary, assumptions = _handle_done_response(
+            _, assumptions = _handle_done_response(
                 response,
                 turn,
                 transcript_lines,
@@ -383,7 +393,7 @@ async def grill_node(state: KindleState, ui: UI) -> dict:
 
         # Check for early exit
         if answer.lower() == "done":
-            _done_summary, assumptions = await _handle_early_exit(
+            _, assumptions = await _handle_early_exit(
                 history,
                 response,
                 turn,
@@ -412,15 +422,10 @@ async def grill_node(state: KindleState, ui: UI) -> dict:
             answer,
         )
 
-        decisions.append(
-            {
-                "question": question,
-                "recommended": recommended,
-                "answer": answer,
-                "category": category,
-                "why_asking": why_asking,
-            }
-        )
+    else:
+        # Loop exhausted MAX_QUESTIONS without agent saying "done"
+        transcript_lines.append(f"**Reached maximum {MAX_QUESTIONS} questions.**")
+        ui.info(f"Reached maximum {MAX_QUESTIONS} questions. Compiling spec.")
 
     grill_transcript = "\n".join(transcript_lines)
     save_artifact(project_dir, "grill_transcript.md", grill_transcript)
